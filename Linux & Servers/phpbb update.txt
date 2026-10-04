@@ -1,0 +1,25 @@
+put board into maintenance mode
+
+Build Docker image of new phpBB version and push to hub
+Login with forums admin credentials
+General > Board Settings
+Set style from custom style back to prosilver for both admin and guests
+Customise > Style
+Deactivate custom style
+Logout of forums admin
+Go to compose file
+update the line to the new image example/org-phpbb:3.3.14.org.1.0 or whatever the version is in Docker Hub
+set the PHPBB_UPGRADE_B flag to true and compose restart
+Go to forums.example.com/install/app.php/update
+click Update
+click Submit to update database only
+Go to the ACP
+login as forumsadmin
+Go to Customise > Styles
+Reactivate custom style
+Go to General > Board settings
+switch prosilver styles back to custom style
+Click submit
+Go to compose file
+Set PHPBB_UPGRADE_B flag back to false
+Compose restart

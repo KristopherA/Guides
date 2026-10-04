@@ -1,0 +1,821 @@
+================================================================================
+PROXMOX VE ADMIN CHEAT SHEET
+Tool: Proxmox VE (pvecm, pvesh, qm, pct, vzdump, pvesm, ha-manager, pveum, pve-firewall, zfs)
+OS coverage: Proxmox VE 8.x / 9.x on Debian 12 / 13. Run as root on a PVE node (SSH or web UI shell).
+Generated: 2026-10-04
+Owner: it@example.com
+Related guide: Linux & Servers/proxmox-cluster-administration-guide.md
+================================================================================
+
+Note: <vmid>, node names (pve1, pve2) and storage IDs (local-lvm, tank-backup) are
+examples. Confirm real names with pvecm nodes and pvesm status. LXC backup and
+restore detail lives in Linux & Servers/lxc_backup_restore_proxmox91.txt.
+
+
+CLUSTER STATUS AND INVENTORY
+--------------------------------------------------------------------------------
+
+COMMAND
+  pveversion -v
+
+DESCRIPTION
+  Shows the Proxmox VE, kernel and component package versions on this node. Run it on every node; version drift is the usual cause of failed joins and migrations.
+
+USAGE
+  pveversion -v | head -5
+
+SUCCESS
+  proxmox-ve: 9.1.0 (running kernel: 6.17.2-1-pve)
+  pve-manager: 9.1.1 (running version: 9.1.1/42db4a6cf33dac83)
+  proxmox-kernel-helper: 9.0.4
+  ceph-fuse: 19.2.3-pve1
+
+FAILURE
+  -bash: pveversion: command not found
+  (You are not on a Proxmox node, or pve-manager is not installed.)
+
+---
+
+COMMAND
+  pvecm status
+
+DESCRIPTION
+  Shows cluster name, membership and quorum math. "Quorate: Yes" must be present before any maintenance; without quorum /etc/pve is read-only.
+
+USAGE
+  pvecm status | grep -E 'Name:|Nodes:|Quorate:|Expected votes:|Total votes:'
+
+SUCCESS
+  Name:             org-pve
+  Nodes:            3
+  Quorate:          Yes
+  Expected votes:   3
+  Total votes:      3
+
+FAILURE
+  Quorate:          No
+  (This node is in the minority partition; check corosync ring network and time sync. Running guests keep running.)
+
+---
+
+COMMAND
+  pvecm nodes
+
+DESCRIPTION
+  Lists cluster members with node ID, votes and name. Use it to get exact node names before migrate, delnode or maintenance commands.
+
+USAGE
+  pvecm nodes
+
+SUCCESS
+  Membership information
+  ----------------------
+      Nodeid      Votes Name
+           1          1 pve1 (local)
+           2          1 pve2
+           3          1 pve3
+
+FAILURE
+  Error: Corosync config '/etc/pve/corosync.conf' does not exist - is this node part of a cluster?
+  (Standalone node, or the node was removed from the cluster.)
+
+---
+
+COMMAND
+  qm list
+
+DESCRIPTION
+  Lists the KVM virtual machines on the local node with status, memory and PID.
+
+USAGE
+  qm list
+
+SUCCESS
+        VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID
+         105 db01                 running    16384             120.00 2214
+         106 db02                 running    16384             120.00 2390
+
+FAILURE
+  ipcc_send_rec[1] failed: Connection refused
+  (pve-cluster / pmxcfs is not running; check systemctl status pve-cluster.)
+
+---
+
+COMMAND
+  pct list
+
+DESCRIPTION
+  Lists LXC containers on the local node with status, lock and name. A lock column value (backup, migrate) explains most "CT is locked" errors.
+
+USAGE
+  pct list
+
+SUCCESS
+  VMID       Status     Lock         Name
+  101        running                 graylog01
+  110        stopped    backup       sign
+
+FAILURE
+  ipcc_send_rec[1] failed: Connection refused
+  (pmxcfs not running or /etc/pve not mounted; restart pve-cluster.)
+
+---
+
+COMMAND
+  pvesm status
+
+DESCRIPTION
+  Shows every storage this node can see with type, active state and capacity. Check it after every reboot; NFS and CIFS mounts do not always come back.
+
+USAGE
+  pvesm status
+
+SUCCESS
+  Name             Type     Status           Total            Used       Available        %
+  local             dir     active        98497780        12318840        81129380   12.51%
+  local-lvm     lvmthin     active       832888832       401221043       431667789   48.17%
+  tank-backup       nfs     active      7811939328      3120394240      4691545088   39.94%
+
+FAILURE
+  storage 'tank-backup' is not online
+  tank-backup       nfs   inactive               0               0               0    0.00%
+  (NFS target unreachable or export changed; check ping and showmount -e against the NAS.)
+
+---
+
+COMMAND
+  pvesh get /cluster/resources --type vm
+
+DESCRIPTION
+  Queries the cluster API for every VM and container on all nodes in one table. Useful for a cluster-wide inventory without logging into each node.
+
+USAGE
+  pvesh get /cluster/resources --type vm --output-format text --noborder
+
+SUCCESS
+  id         type  vmid  name       node  status   maxmem       maxdisk
+  qemu/105   qemu  105   db01       pve1  running  17179869184  128849018880
+  lxc/101    lxc   101   graylog01  pve2  running  4294967296   34359738368
+
+FAILURE
+  400 Parameter verification failed.
+  type: value 'vms' does not have a value in the enumeration 'vm, storage, node, sdn'
+  (Typo in --type; valid values are listed in the error.)
+
+---
+
+
+GUEST LIFECYCLE AND CONSOLE ACCESS
+--------------------------------------------------------------------------------
+
+COMMAND
+  qm start <vmid>
+
+DESCRIPTION
+  Starts a VM on the local node. If it fails, read the actual error rather than guessing; storage not mounted is the most common cause after a host reboot.
+
+USAGE
+  qm start 105
+
+SUCCESS
+  (no output; returns to prompt)
+  qm status 105 then shows: status: running
+
+FAILURE
+  storage 'tank-vm' is not online
+  (Guest disk lives on storage that is inactive on this node; fix the mount with pvesm status, then retry.)
+
+---
+
+COMMAND
+  qm shutdown <vmid> --timeout <seconds>
+
+DESCRIPTION
+  Sends an ACPI shutdown to the guest and waits. Use qm stop only if the guest ignores ACPI, since stop is a hard power-off.
+
+USAGE
+  qm shutdown 105 --timeout 180
+
+SUCCESS
+  (no output; returns to prompt)
+  qm status 105 then shows: status: stopped
+
+FAILURE
+  VM quit/powerdown failed - got timeout
+  (QEMU guest agent or ACPI not responding inside the guest; investigate before using qm stop 105.)
+
+---
+
+COMMAND
+  qm config <vmid>
+
+DESCRIPTION
+  Prints a VM's configuration from /etc/pve/qemu-server/<vmid>.conf. Check cpu:, disk storage IDs and hostpci/usb lines before migrating.
+
+USAGE
+  qm config 105 | grep -E '^(cpu|memory|scsi0|net0|hostpci)'
+
+SUCCESS
+  cpu: x86-64-v2-AES
+  memory: 16384
+  net0: virtio=BC:24:11:3A:7F:02,bridge=vmbr0,firewall=1
+  scsi0: local-lvm:vm-105-disk-0,iothread=1,size=120G
+
+FAILURE
+  Configuration file 'nodes/pve1/qemu-server/105.conf' does not exist
+  (The VM lives on another node; find it with pvesh get /cluster/resources --type vm.)
+
+---
+
+COMMAND
+  pct start <vmid>  /  pct shutdown <vmid>
+
+DESCRIPTION
+  Starts or cleanly stops an LXC container. Use pct stop only when a clean shutdown hangs.
+
+USAGE
+  pct shutdown 101 --timeout 60 && pct start 101
+
+SUCCESS
+  (no output; returns to prompt)
+  pct status 101 then shows: status: running
+
+FAILURE
+  CT 101 is locked (backup)
+  (A vzdump job is running against this container; wait for it, or clear a stale lock with pct unlock 101 only after confirming no backup is active.)
+
+---
+
+COMMAND
+  pct enter <vmid>
+
+DESCRIPTION
+  Opens a root shell inside a running container directly from the host. Fastest way into a container whose network is broken.
+
+USAGE
+  pct enter 101
+
+SUCCESS
+  root@graylog01:~
+  (Root prompt inside the container. Type exit to return to the host shell.)
+
+FAILURE
+  container '101' not running!
+  (Start it first with pct start 101.)
+
+---
+
+COMMAND
+  pct exec <vmid> -- <command>
+
+DESCRIPTION
+  Runs a single command inside a container without an interactive shell. Ideal for post-restore and post-maintenance health checks.
+
+USAGE
+  pct exec 101 -- systemctl is-system-running
+
+SUCCESS
+  running
+  (degraded is also acceptable if the failed unit is known and unimportant.)
+
+FAILURE
+  container '101' not running!
+  (Or output "offline" / "starting" if systemd inside the CT has not finished booting.)
+
+---
+
+COMMAND
+  pct set <vmid> --<option> <value>
+
+DESCRIPTION
+  Changes container settings such as memory, cores, hostname or onboot. Most changes need a container restart to take effect.
+
+USAGE
+  pct set 101 --memory 4096 --cores 2 --onboot 1
+
+SUCCESS
+  (no output; change written to /etc/pve/lxc/101.conf)
+
+FAILURE
+  cluster not ready - no quorum? (500)
+  (Node has lost quorum so /etc/pve is read-only; restore quorum before editing configs.)
+
+---
+
+COMMAND
+  qm terminal <vmid>  /  pct console <vmid>
+
+DESCRIPTION
+  Attaches to a VM serial console or a container console from SSH. Exit a VM terminal with Ctrl-o and a container console with Ctrl-a q.
+
+USAGE
+  pct console 101
+
+SUCCESS
+  Connected to tty 1
+  Type <Ctrl+a q> to exit the console, <Ctrl+a Ctrl+a> to enter Ctrl+a itself
+  graylog01 login:
+
+FAILURE
+  unable to find a serial interface
+  (qm terminal needs serial0: socket in the VM config; use the web UI noVNC console instead.)
+
+---
+
+
+MIGRATION AND STORAGE
+--------------------------------------------------------------------------------
+
+COMMAND
+  qm migrate <vmid> <target-node> --online
+
+DESCRIPTION
+  Live-migrates a running VM to another node with no downtime. The disk must be on shared storage, or add --with-local-disks to copy it.
+
+USAGE
+  qm migrate 105 pve2 --online
+
+SUCCESS
+  2026-10-04 21:14:02 migration active, transferred 15.8 GiB of 16.0 GiB VM-state, 1.1 GiB/s
+  2026-10-04 21:14:09 migration finished successfully (duration 00:00:31)
+  TASK OK
+
+FAILURE
+  can't live migrate attached local disks without with-local-disks option
+  (Disk is on local storage; add --with-local-disks or move the disk to shared storage. Also compare pveversion -v on both nodes.)
+
+---
+
+COMMAND
+  pct migrate <vmid> <target-node> --restart
+
+DESCRIPTION
+  Moves a container to another node. LXC cannot live-migrate, so --restart stops it, moves it and starts it again; schedule the brief outage.
+
+USAGE
+  pct migrate 101 pve2 --restart --timeout 120
+
+SUCCESS
+  2026-10-04 21:20:11 shutdown CT 101
+  2026-10-04 21:20:44 start final cleanup
+  2026-10-04 21:20:46 start container on target node
+  2026-10-04 21:20:48 migration finished successfully (duration 00:00:37)
+
+FAILURE
+  ERROR: migration aborted (duration 00:00:01): storage 'local-zfs' is not available on node 'pve2'
+  (Target node lacks that storage ID; restore across nodes from vzdump instead, see the LXC backup guide section 4.)
+
+---
+
+COMMAND
+  pvesm list <storage> --content backup
+
+DESCRIPTION
+  Lists the volumes on one storage, filtered by content type. Use it to find the exact backup archive name before a restore.
+
+USAGE
+  pvesm list tank-backup --content backup --vmid 101
+
+SUCCESS
+  Volid                                                       Format  Type      Size VMID
+  tank-backup:backup/vzdump-lxc-101-2026_10_03-02_00_01.tar.zst tar.zst backup 1284530000 101
+
+FAILURE
+  storage 'tank-backup' does not exist
+  (Wrong storage ID; list valid IDs with pvesm status.)
+
+---
+
+COMMAND
+  zpool status -x
+
+DESCRIPTION
+  Reports only unhealthy ZFS pools, so a clean system prints a single line. Drop -x to see full vdev and scrub detail for every pool.
+
+USAGE
+  zpool status -x && zpool list -o name,size,alloc,free,cap,health
+
+SUCCESS
+  all pools are healthy
+  NAME    SIZE  ALLOC   FREE    CAP  HEALTH
+  rpool   928G   214G   714G    23%  ONLINE
+
+FAILURE
+    pool: rpool
+   state: DEGRADED
+  status: One or more devices could not be used because the label is missing or invalid.
+  (A mirror member has failed; identify it by serial and plan zpool replace.)
+
+---
+
+COMMAND
+  zfs list -o name,used,avail,refer
+
+DESCRIPTION
+  Shows ZFS datasets and zvols with space used and available. Guest disks on ZFS storage appear as rpool/data/vm-<vmid>-disk-N.
+
+USAGE
+  zfs list -o name,used,avail,refer -r rpool/data
+
+SUCCESS
+  NAME                         USED  AVAIL  REFER
+  rpool/data                   198G   701G    96K
+  rpool/data/vm-105-disk-0     124G   701G  61.3G
+  rpool/data/subvol-101-disk-0 8.20G 23.8G  8.20G
+
+FAILURE
+  cannot open 'rpool/data': dataset does not exist
+  (Pool or dataset name differs on this node; run zfs list with no arguments.)
+
+---
+
+COMMAND
+  lvs -a
+
+DESCRIPTION
+  Shows LVM logical volumes including the LVM-thin pool Data% and Meta%. Over about 90 percent is dangerous; a full thin pool can corrupt guest filesystems.
+
+USAGE
+  lvs -a -o lv_name,vg_name,lv_size,data_percent,metadata_percent pve
+
+SUCCESS
+  LV              VG  LSize    Data%  Meta%
+  data            pve 794.30g  48.17  2.61
+  vm-105-disk-0   pve 120.00g  52.40
+
+FAILURE
+  data            pve 794.30g  97.85  9.12
+  (Thin pool nearly full; treat as an incident, stop non-essential guests, free space or extend the pool.)
+
+---
+
+
+BACKUP AND RESTORE
+--------------------------------------------------------------------------------
+
+COMMAND
+  vzdump <vmid> --storage <storage> --compress zstd --mode snapshot
+
+DESCRIPTION
+  Backs up one VM or container to a storage that has the backup content type. Snapshot mode is live; stop mode is safest but briefly shuts the guest down.
+
+USAGE
+  vzdump 101 --storage tank-backup --compress zstd --mode snapshot --notes-template '{{hostname}} pre-patch'
+
+SUCCESS
+  INFO: starting new backup job: vzdump 101 --storage tank-backup --compress zstd --mode snapshot
+  INFO: creating vzdump archive '/mnt/pve/tank-backup/dump/vzdump-lxc-101-2026_10_04-21_30_02.tar.zst'
+  INFO: Finished Backup of CT 101 (00:00:14)
+  INFO: Backup job finished successfully
+
+FAILURE
+  ERROR: Backup of VM 101 failed - CT 101 is locked (backup)
+  (Another backup job is running for this guest, or a stale lock remains after a crash.)
+
+---
+
+COMMAND
+  vzdump --all --exclude <vmid,...>
+
+DESCRIPTION
+  Backs up every guest on the local node in one job, optionally skipping some. Use before a PVE major upgrade so every guest has a current archive.
+
+USAGE
+  vzdump --all --exclude 999 --storage tank-backup --compress zstd --mode snapshot --mailto admin@example.com
+
+SUCCESS
+  INFO: Finished Backup of VM 105 (00:04:12)
+  INFO: Finished Backup of CT 101 (00:00:14)
+  INFO: Backup job finished successfully
+
+FAILURE
+  ERROR: Backup of VM 105 failed - unable to create temporary directory '/mnt/pve/tank-backup/dump/vzdump-qemu-105-2026_10_04-21_40_00.tmp' at /usr/share/perl5/PVE/VZDump.pm
+  (Backup storage full or not writable; check pvesm status and df -h.)
+
+---
+
+COMMAND
+  pct restore <vmid> <archive> --storage <storage>
+
+DESCRIPTION
+  Restores a container from a vzdump archive. Use a new VMID for a safe side-by-side test; add --force only to deliberately overwrite the existing container.
+
+USAGE
+  pct restore 201 tank-backup:backup/vzdump-lxc-101-2026_10_03-02_00_01.tar.zst --storage local-lvm --unprivileged 1
+
+SUCCESS
+  extracting archive '/mnt/pve/tank-backup/dump/vzdump-lxc-101-2026_10_03-02_00_01.tar.zst'
+  Total bytes read: 1284530000 (1.2GiB, 98MiB/s)
+  merged configuration from the backup
+
+FAILURE
+  unable to restore CT 101 - CT 101 already exists on node 'pve1'
+  (Pick a free VMID, or add --force after stopping the CT if overwrite is intended.)
+
+---
+
+COMMAND
+  qmrestore <archive> <vmid> --storage <storage>
+
+DESCRIPTION
+  Restores a VM from a vzdump archive (.vma.zst). Same rules as pct restore: new VMID for testing, --force to overwrite.
+
+USAGE
+  qmrestore /mnt/pve/tank-backup/dump/vzdump-qemu-105-2026_10_03-02_10_00.vma.zst 205 --storage local-lvm --unique 1
+
+SUCCESS
+  restore vma archive: zstd -q -d -c /mnt/pve/tank-backup/dump/vzdump-qemu-105-2026_10_03-02_10_00.vma.zst | vma extract -v -r /var/tmp/vzdumptmp1234.fifo - /var/tmp/vzdumptmp1234
+  progress 100% (read 128849018880 bytes, duration 412 sec)
+  rescan volumes...
+
+FAILURE
+  unable to restore VM 205 - VM 205 already exists on node 'pve1'
+  (VMID is taken; choose another. --unique 1 regenerates MAC addresses so the test copy does not clash on the network.)
+
+---
+
+
+MAINTENANCE, UPGRADES AND SERVICE LOGS
+--------------------------------------------------------------------------------
+
+COMMAND
+  ha-manager status
+
+DESCRIPTION
+  Shows HA manager quorum, the active CRM master, each node LRM state and every HA-managed service. Only relevant if HA resources are configured.
+
+USAGE
+  ha-manager status
+
+SUCCESS
+  quorum OK
+  master pve1 (active, Sat Oct  4 21:45:10 2026)
+  lrm pve1 (active, Sat Oct  4 21:45:12 2026)
+  service vm:105 (pve1, started)
+
+FAILURE
+  quorum No
+  (Cluster has lost quorum; HA will fence nodes. Check pvecm status immediately.)
+
+---
+
+COMMAND
+  ha-manager crm-command node-maintenance enable <node>
+
+DESCRIPTION
+  Puts a node into HA maintenance mode so HA-managed guests are moved off it. Disable it after the node is verified healthy.
+
+USAGE
+  ha-manager crm-command node-maintenance enable pve1
+
+SUCCESS
+  (no output; ha-manager status then shows: lrm pve1 (maintenance mode, ...))
+
+FAILURE
+  cluster not ready - no quorum? (500)
+  (HA commands need a quorate cluster; restore quorum first.)
+
+---
+
+COMMAND
+  apt update && apt full-upgrade
+
+DESCRIPTION
+  Patches a PVE node. Always use full-upgrade (or dist-upgrade), never plain apt upgrade, which can hold back kernel and pve-manager packages.
+
+USAGE
+  apt update && apt full-upgrade -y && pveversion -v | head -2
+
+SUCCESS
+  The following packages will be upgraded:
+    proxmox-kernel-6.17 pve-manager pve-qemu-kvm
+  3 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.
+
+FAILURE
+  E: Failed to fetch https://enterprise.proxmox.com/debian/pve/dists/trixie/InRelease  401  Unauthorized
+  (Enterprise repo enabled without a subscription key; use the correct repo for this node.)
+
+---
+
+COMMAND
+  pve8to9 --full
+
+DESCRIPTION
+  Runs the pre-upgrade checker before a major version jump. Use the checker that matches the jump (pve7to8, pve8to9) and resolve every WARN and FAIL before changing repositories.
+
+USAGE
+  pve8to9 --full | tail -8
+
+SUCCESS
+  = SUMMARY =
+  TOTAL:    48
+  PASSED:   42
+  SKIPPED:  5
+  WARNINGS: 1
+  FAILURES: 0
+
+FAILURE
+  WARN: 1 running guest(s) detected - consider migrating or stopping them.
+  WARNINGS: 3
+  FAILURES: 1
+  (Read each FAIL and WARN line above the summary, empty the node, fix the items, then rerun.)
+
+---
+
+COMMAND
+  journalctl -u corosync -u pve-cluster --since "<time>"
+
+DESCRIPTION
+  Reads cluster membership (corosync) and pmxcfs (pve-cluster) events. First stop when a node shows red in the UI or /etc/pve is stuck.
+
+USAGE
+  journalctl -u corosync -u pve-cluster --since "1 hour ago" --no-pager | tail -20
+
+SUCCESS
+  corosync[1422]:   [QUORUM] Members[3]: 1 2 3
+  corosync[1422]:   [MAIN  ] Completed service synchronization, ready to provide service.
+  pmxcfs[1311]: [status] notice: all data is up to date
+
+FAILURE
+  corosync[1422]:   [KNET  ] link: host: 2 link: 0 is down
+  corosync[1422]:   [TOTEM ] Retransmit List: 4a1 4a2 4a3
+  (Ring network problem or clock drift; check the corosync link and timedatectl on both nodes.)
+
+---
+
+COMMAND
+  systemctl --failed  /  systemctl restart pveproxy
+
+DESCRIPTION
+  Lists failed units after a reboot, and restarts the web UI service if port 8006 stops answering. Restarting pveproxy or corosync does not touch running guests.
+
+USAGE
+  systemctl --failed && systemctl restart pveproxy && ss -lntp | grep 8006
+
+SUCCESS
+  0 loaded units listed.
+  LISTEN 0 4096 *:8006 *:* users:(("pveproxy worker",pid=24811,fd=6))
+
+FAILURE
+  pveproxy.service: Failed with result 'exit-code'.
+  (Often a bad custom certificate; read journalctl -u pveproxy -n 50 for the parse error.)
+
+---
+
+COMMAND
+  pvecm expected <votes>
+
+DESCRIPTION
+  EMERGENCY ONLY. Lowers expected votes so a surviving node becomes quorate. Use only when the other nodes are truly down and will stay down; misuse causes split brain.
+
+USAGE
+  pvecm expected 1
+
+SUCCESS
+  (no output; pvecm status then shows Quorate: Yes and Expected votes: 1)
+
+FAILURE
+  Unable to set expected votes: CS_ERR_INVALID_PARAM
+  (Value is lower than the votes currently present; the setting is reverted by a corosync restart anyway.)
+
+---
+
+
+SECURITY, PERMISSIONS AND AUDIT
+--------------------------------------------------------------------------------
+
+COMMAND
+  pveum user list
+
+DESCRIPTION
+  Lists Proxmox users across realms (pam, pve, AD) with enabled state and expiry. Review periodically and disable anything unrecognised.
+
+USAGE
+  pveum user list --output-format text --noborder
+
+SUCCESS
+  userid             enable expire firstname lastname email             realm-type tfa-locked-until
+  root@pam           1      0                         admin@example.com  pam
+  auditor@pve        1      0      Read     Only                         pve
+
+FAILURE
+  permission check failed (/access, User.Modify)
+  (Run as root on the node, or as a user with Sys.Audit / User.Modify on /access.)
+
+---
+
+COMMAND
+  pveum acl modify <path> --users <user> --roles <role>
+
+DESCRIPTION
+  Grants a role to a user or group on a path such as /, /vms/<vmid> or /storage/<id>. Prefer narrow paths and built-in roles like PVEAuditor or PVEVMUser.
+
+USAGE
+  pveum acl modify /vms/105 --users auditor@pve --roles PVEAuditor
+
+SUCCESS
+  (no output; pveum acl list then shows: /vms/105  user  auditor@pve  PVEAuditor  1)
+
+FAILURE
+  user 'auditr@pve' does not exist
+  (Typo in user ID or wrong realm suffix; confirm with pveum user list.)
+
+---
+
+COMMAND
+  pveum user permissions <user>
+
+DESCRIPTION
+  Shows the effective permissions a user ends up with on each path after role and group inheritance. Use it to audit what an account can really do.
+
+USAGE
+  pveum user permissions auditor@pve --path /vms/105
+
+SUCCESS
+  /vms/105:
+    VM.Audit (*)
+    Datastore.Audit (*)
+
+FAILURE
+  no such user ('auditor@pam')
+  (Same name in a different realm is a different user; check the @realm suffix.)
+
+---
+
+COMMAND
+  pve-firewall status
+
+DESCRIPTION
+  Reports whether the Proxmox firewall is enabled and running on this node. Datacenter-level enable is in /etc/pve/firewall/cluster.fw.
+
+USAGE
+  pve-firewall status
+
+SUCCESS
+  Status: enabled/running
+
+FAILURE
+  Status: disabled/running
+  (Firewall service runs but rules are not enforced; enable it under Datacenter > Firewall > Options after confirming 8006 and 22 rules exist.)
+
+---
+
+COMMAND
+  pve-firewall compile
+
+DESCRIPTION
+  Compiles and prints the iptables / nftables ruleset that would be applied, without applying it. Use it to sanity-check rule edits before enabling the firewall.
+
+USAGE
+  pve-firewall compile | grep -E 'dport (22|8006)'
+
+SUCCESS
+  -A PVEFW-HOST-IN -s 10.0.0.0/24 -p tcp --dport 8006 -j RETURN
+  -A PVEFW-HOST-IN -s 10.0.0.0/24 -p tcp --dport 22 -j RETURN
+
+FAILURE
+  /etc/pve/firewall/cluster.fw (line 14) - errors in rule parameters: IN ACCEPT -p tcp -dport 8006
+  (Syntax error in the rule; fix the line, here a single dash before dport.)
+
+---
+
+COMMAND
+  pvenode cert info
+
+DESCRIPTION
+  Lists the web UI certificates on this node with issuer, SANs and expiry. pveproxy-ssl.pem, if present, overrides the cluster-CA issued pve-ssl.pem.
+
+USAGE
+  pvenode cert info --output-format text | grep -E 'filename|notafter|subject'
+
+SUCCESS
+  filename      pve-ssl.pem
+  notafter      2027-06-12 14:02:33
+  subject       /OU=PVE Cluster Node/O=Proxmox Virtual Environment/CN=pve1.example.com
+
+FAILURE
+  notafter      2026-09-30 23:59:59
+  (Certificate already expired; browsers and API clients will refuse it. Renew with pvenode cert set or pvenode acme cert order, then systemctl restart pveproxy.)
+
+---
+
+COMMAND
+  pvesh get /nodes/<node>/tasks --errors 1
+
+DESCRIPTION
+  Pulls recent failed tasks (backups, migrations, starts) from the node task log via the API. Good for a daily audit of what went wrong overnight.
+
+USAGE
+  pvesh get /nodes/pve1/tasks --errors 1 --limit 10 --output-format text --noborder
+
+SUCCESS
+  upid                                                      type    id   user      status
+  UPID:pve1:00012A3F:0A1B2C3D:66FF1A20:vzdump:101:root@pam: vzdump  101  root@pam  job errors
+
+FAILURE
+  hostname lookup 'pve9' failed - failed to get address info for: pve9: Name or service not known
+  (Wrong node name in the path; use a name from pvecm nodes.)
+
+---
+
+Generated by Claude | For internal/reference use only

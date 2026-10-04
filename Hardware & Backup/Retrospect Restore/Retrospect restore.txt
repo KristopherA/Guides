@@ -1,0 +1,95 @@
+Ok there was some backup running that was failing that I have to look into but:
+[11:56 AM]
+Click the Restore button at the top
+Choose “Restore Selected Files and Folders”
+[11:56 AM](I’ll let you drive unless you want me to drive)
+tech  [11:56 AM]
+you can
+[11:57 AM]I want to actually see the succcess to burn success into my brain
+sysadmin  [11:57 AM]
+OK
+tech  [11:57 AM]
+me screwing around only burns screwing around in
+sysadmin  [11:57 AM]
+It can be slow
+tech  [11:57 AM]
+all good
+[11:58 AM]data.example.com
+sysadmin  [11:58 AM]
+Right
+[11:58 AM]Remind me to rename it from data  to data.example.com
+[11:58 AM]3. I searched for data
+[11:59 AM]4. The date I want to restore from isn’t listed, so I selected one of them and then clicked the More Backups… button
+[11:59 AM]Mmmm hang on
+[12:01 PM]Sorry, just got confused for a second since have multiple data sources
+tech  [12:02 PM]
+so pick the 'Server Backups' one since that's the one that runs
+sysadmin  [12:02 PM]
+I’ll rename the machine. There are two backups to choose from. One is the onsite, one is the offisite media set. I’m choosing the Onsite media set, then clicking More Backups…
+[12:03 PM]They both run, but if you restored from the Offsite one it might ask you for a disk that is in the offsite safe
+tech  [12:03 PM]
+yeah I figured
+sysadmin  [12:03 PM]
+Now we have the list of all of the backups in the Onsite media set
+[12:03 PM]So I’m going to choose May 10th
+tech  [12:03 PM]
+so may 8 and 9, happens on the 10th?
+sysadmin  [12:03 PM]
+We keep X days worth
+tech  [12:03 PM]
+Cause +1 for it to appear
+[12:04 PM]ok so the backup on 10 will have what is in the backups folder of data so be one day ahead
+sysadmin  [12:04 PM]
+Esentially, yes
+tech  [12:04 PM]
+k
+sysadmin  [12:05 PM]
+Ok I went too far but I’m going to choose the 11th instead :wink:
+[12:05 PM]4. Find the backup you want and click Retreive
+[12:06 PM]5. Wait. There is a Job running to Retrieve it
+tech  [12:06 PM]
+kk
+sysadmin  [12:07 PM]
+You probably didn’t see it, but the Jobs running went from 2 to 1
+tech  [12:07 PM]
+ok
+sysadmin  [12:07 PM]
+I then re-searched for data to refresh the list, and the 5/11 backup is now there
+tech  [12:07 PM]
+in "activities"
+sysadmin  [12:07 PM]
+Yeah
+[12:07 PM]Now I am clicking the Browse button
+[12:07 PM]On the 5/11 backup
+[12:08 PM]I clicked the triangle to disclose the backups
+tech  [12:08 PM]
+sure
+[12:08 PM]now choose both 8 & 9
+sysadmin  [12:08 PM]
+Clicking on the 9 and 10
+[12:09 PM]Sorry, 8 and 9
+[12:09 PM]Chose Select, and now choosing Continue
+[12:10 PM]Going to restore it to the convenient Test drive, ensuring I selected Restore to a new folder or it WILL overwrite the drive
+[12:11 PM]Chose Start Now, and then I’m going to immediately look at Activities to see if it needs a drive
+tech  [12:11 PM]
+it'll queue behind running jobs
+tech  [12:11 PM]
+it'll flash the disk name if it needs a disk?
+sysadmin  [12:11 PM]
+It’s multi-threaded unless it has to read/write from the same Media Set
+tech  [12:11 PM]
+ok, so no queuing then
+sysadmin  [12:12 PM]
+replied to a thread:If you don’t select the option to “restore to a new folder” it’ll overwrite the destination
+tech  [12:12 PM]
+from the test disk, I can just copy them to another disk etc
+sysadmin  [12:12 PM]
+Yup
+tech  [12:12 PM]
+any clean up needed?
+sysadmin  [12:12 PM]
+If it needs a disk out of the Safe you would see it here
+[12:12 PM]You can delete it off of Test when you’ve copied it to wherever
+
+There’s a “Restore for <user>” folder on System Admins share
+[12:13 PM]

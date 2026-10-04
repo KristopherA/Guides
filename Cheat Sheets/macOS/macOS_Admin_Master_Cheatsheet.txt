@@ -1,0 +1,837 @@
+================================================================================
+MACOS ADMIN MASTER CHEAT SHEET
+================================================================================
+Tool: macOS administration CLI (built-in tools plus Munki managedsoftwareupdate)
+OS coverage: macOS Sonoma 14, Sequoia 15, Tahoe 26 (Apple silicon and Intel)
+Generated: 2026-10-04
+Owner: it@example.com
+Related guide: Support Procedures/macos-desktop-support-runbook.txt
+Note: Diagnose before changing. Never put passwords, recovery keys or tokens in command arguments, shell history or tickets.
+Note: Organization Macs are managed by Munki and bound to AD (auth2.example.com / auth4.example.com). An MDM is not confirmed (see Windows & Mac Workstations/mdm-and-apple-business-manager-guide.md).
+================================================================================
+
+
+SYSTEM INFORMATION AND PROCESSES
+================================================================================
+
+COMMAND
+  sw_vers
+
+DESCRIPTION
+  Prints the macOS product name, version, and build. Record it at the start of every ticket.
+
+USAGE
+  sw_vers
+
+SUCCESS
+  ProductName:            macOS
+  ProductVersion:         26.0.1
+  BuildVersion:           25A362
+
+FAILURE
+  zsh: command not found: sw_vers
+  (You are in a shell on a non-Mac host, such as an SSH session to a Linux server.)
+
+---
+
+COMMAND
+  system_profiler <DataType> [-detailLevel mini|basic|full]
+
+DESCRIPTION
+  Reports hardware and software inventory. Pick a data type such as SPHardwareDataType, SPStorageDataType, or SPPowerDataType; system_profiler -listDataTypes lists them all.
+
+USAGE
+  system_profiler SPHardwareDataType -detailLevel mini
+
+SUCCESS
+  Hardware:
+      Hardware Overview:
+        Model Name: MacBook Pro
+        Model Identifier: Mac15,6
+        Chip: Apple M3 Pro
+        Memory: 18 GB
+
+FAILURE
+  (No output.)
+  (The data type name is misspelled. Names are case sensitive - check with system_profiler -listDataTypes.)
+
+---
+
+COMMAND
+  scutil --get ComputerName|LocalHostName|HostName
+
+DESCRIPTION
+  Reads the Mac's friendly name, Bonjour name, or Unix hostname. Use scutil --set with sudo to change one, and match the asset tag naming convention.
+
+USAGE
+  scutil --get ComputerName
+
+SUCCESS
+  IT-MBP-014
+
+FAILURE
+  HostName: not set
+  (No explicit hostname is set, so macOS uses the DHCP or Bonjour name. Set one with sudo scutil --set HostName.)
+
+---
+
+COMMAND
+  top -o <key> -l <samples> -n <count>
+
+DESCRIPTION
+  Takes a snapshot of the busiest processes. The -l 1 option gives a single sample that you can paste into a ticket instead of the interactive view.
+
+USAGE
+  top -o cpu -l 1 -n 10 -stats pid,command,cpu,mem
+
+SUCCESS
+  PID    COMMAND          %CPU  MEM
+  4821   Microsoft Teams  142.3 1610M
+  611    WindowServer     18.0  412M
+  301    mds_stores       9.4   96M
+
+FAILURE
+  invalid argument -o: cpuu
+  (The sort key is wrong. Valid keys include cpu, mem, pid, and time.)
+
+---
+
+COMMAND
+  ps aux | grep -i <name>
+
+DESCRIPTION
+  Finds running processes by name and shows their PID, owner, CPU, and memory. Use it to get the PID before running kill.
+
+USAGE
+  ps aux | grep -i "[m]anagedsoftwareupdate"
+
+SUCCESS
+  root   1288  12.1  0.4  4123456  70412  ??  Ss  9:02AM  0:03.11 /usr/local/munki/managedsoftwareupdate --auto
+
+FAILURE
+  (No output.)
+  (The process is not running, or its name differs from what you typed. The [m] bracket trick stops grep from matching itself.)
+
+---
+
+COMMAND
+  kill [-15|-9] <pid>
+
+DESCRIPTION
+  Sends a signal to a process. Try -15 (TERM, a graceful exit) first, and use -9 (KILL) only if the process ignores it.
+
+USAGE
+  kill -15 4821
+
+SUCCESS
+  (No output. Check with ps -p 4821 that the process has gone.)
+
+FAILURE
+  kill: kill 4821 failed: operation not permitted
+  (The process belongs to root or another user. Use sudo kill only if you have checked what it is.)
+
+---
+
+COMMAND
+  pmset -g [batt|assertions|log]
+
+DESCRIPTION
+  Shows power settings, battery state, and the sleep assertions that keep the Mac awake. pmset -g log | grep -i "wake reason" explains unexpected wakes.
+
+USAGE
+  pmset -g assertions | grep -v " 0"
+
+SUCCESS
+  Assertion status system-wide:
+     PreventUserIdleSystemSleep     1
+  Listed by owning process:
+     pid 4821(Microsoft Teams): PreventUserIdleDisplaySleep named: "Call in progress"
+
+FAILURE
+  pmset: Usage: pmset <options>
+  (Unknown subcommand. Check the -g argument, for example batt, ps, live, or assertions.)
+
+---
+
+
+NETWORK AND DIRECTORY
+================================================================================
+
+COMMAND
+  scutil --dns
+
+DESCRIPTION
+  Shows the full resolver configuration, including search domains, per-interface DNS servers, and VPN split-DNS resolvers. It is more accurate than /etc/resolv.conf on macOS.
+
+USAGE
+  scutil --dns | grep -E "search domain|nameserver" | sort -u
+
+SUCCESS
+    nameserver[0] : 10.0.0.53
+    search domain[0] : example.com
+
+FAILURE
+  No DNS configuration available
+  (No active network service. Check Wi-Fi or Ethernet with networksetup -listallhardwareports.)
+
+---
+
+COMMAND
+  networksetup -getdnsservers|-getwebproxy|-getinfo <service>
+
+DESCRIPTION
+  Reads per-service network settings. Service names such as "Wi-Fi" and "USB 10/100/1000 LAN" come from networksetup -listallnetworkservices.
+
+USAGE
+  networksetup -getdnsservers Wi-Fi
+
+SUCCESS
+  10.0.0.53
+  10.0.0.54
+
+FAILURE
+  There aren't any DNS Servers set on Wi-Fi.
+  (No manual DNS is set, so DHCP-provided DNS applies - check scutil --dns. A wrong service name returns: ** Error: The parameters were not valid.)
+
+---
+
+COMMAND
+  dscl . list /Users
+
+DESCRIPTION
+  Lists the local user accounts in the local directory node. Filter out the system accounts that begin with an underscore.
+
+USAGE
+  dscl . list /Users | grep -v '^_'
+
+SUCCESS
+  daemon
+  itadmin
+  jdoe
+  nobody
+  root
+
+FAILURE
+  <dscl_cmd> DS Error: -14009 (eDSUnknownNodeName)
+  (The node path is wrong. Use . for local, or /Active\ Directory/EXAMPLE/All\ Domains for AD.)
+
+---
+
+COMMAND
+  dsconfigad -show
+
+DESCRIPTION
+  Shows the Active Directory binding: domain, computer account, mobile account settings, and preferred domain controller. Run it first for any AD login problem.
+
+USAGE
+  dsconfigad -show
+
+SUCCESS
+  Active Directory Forest          = example.com
+  Active Directory Domain          = example.com
+  Computer Account                 = it-mbp-014$
+  Advanced Options - User Experience
+    Create mobile account at login = Enabled
+  Advanced Options - Administrative
+    Preferred Domain controller    = auth2.example.com
+
+FAILURE
+  (No output.)
+  (The Mac is not bound to AD. Check that it can reach auth2.example.com and auth4.example.com before rebinding.)
+
+---
+
+COMMAND
+  sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
+
+DESCRIPTION
+  Flushes the directory and DNS caches. Use it after DNS record changes, or when a hostname resolves to an old address.
+
+USAGE
+  sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
+
+SUCCESS
+  (No output. Check the change with dscacheutil -q host -a name files.example.com.)
+
+FAILURE
+  No matching processes belonging to you were found
+  (sudo was left off the killall part.)
+
+---
+
+
+DISK AND BACKUP
+================================================================================
+
+COMMAND
+  diskutil list [disk]
+
+DESCRIPTION
+  Lists physical disks, APFS containers, and volumes with their identifiers (disk0, disk3s1). Use it to find the right identifier before any disk operation.
+
+USAGE
+  diskutil list internal
+
+SUCCESS
+  /dev/disk0 (internal, physical):
+     #:                       TYPE NAME                    SIZE       IDENTIFIER
+     0:      GUID_partition_scheme                        *500.3 GB   disk0
+     2:                 Apple_APFS Container disk3         494.4 GB   disk0s2
+
+FAILURE
+  Could not find disk: disk9
+  (Wrong identifier. External disks may also be unplugged or not mounted.)
+
+---
+
+COMMAND
+  diskutil apfs list
+
+DESCRIPTION
+  Shows APFS containers, volume roles (System, Data, Preboot, Recovery), capacity in use, and FileVault state for each volume.
+
+USAGE
+  diskutil apfs list | grep -E "Volume disk|Name:|FileVault|Capacity In Use"
+
+SUCCESS
+  +-> Volume disk3s1 ...
+      Name:                      Macintosh HD (Case-insensitive)
+      Capacity In Use By Volumes:  412.6 GB (83.5% used)
+      FileVault:                 Yes (Unlocked)
+
+FAILURE
+  No APFS Containers found
+  (The disk is HFS+ or unformatted, or you are in the wrong environment, such as some Recovery contexts.)
+
+---
+
+COMMAND
+  tmutil latestbackup|destinationinfo|status
+
+DESCRIPTION
+  Shows the last Time Machine backup, the configured destinations, and the current backup progress. Confirm a recent backup before any destructive fix.
+
+USAGE
+  tmutil destinationinfo
+
+SUCCESS
+  ====================================================
+  Name          : ORG-TM-Backups
+  Kind          : Network
+  Mount Point   : /Volumes/ORG-TM-Backups
+  ID            : 4A1B2C3D-0000-1111-2222-333344445555
+
+FAILURE
+  tmutil: No destinations configured.
+  (Time Machine is not set up. Check whether the user's data lives on files.example.com instead.)
+
+---
+
+COMMAND
+  tmutil listlocalsnapshots /
+
+DESCRIPTION
+  Lists local APFS Time Machine snapshots, which can hold "purgeable" space. Delete one only after checking it, using tmutil deletelocalsnapshots <date>.
+
+USAGE
+  tmutil listlocalsnapshots /
+
+SUCCESS
+  Snapshots for disk /:
+  com.apple.TimeMachine.2026-10-03-091512.local
+  com.apple.TimeMachine.2026-10-04-081003.local
+
+FAILURE
+  Snapshots for disk /:
+  (Only the header prints: there are no local snapshots, so look elsewhere for the used space - start with sudo du -sh /private/var/folders.)
+
+---
+
+
+SOFTWARE UPDATES AND PACKAGES
+================================================================================
+
+COMMAND
+  softwareupdate -l
+
+DESCRIPTION
+  Lists the Apple updates that are available, with their labels, sizes, and whether a restart is needed. Copy the exact Label text when installing a single update.
+
+USAGE
+  softwareupdate -l
+
+SUCCESS
+  Software Update Tool
+
+  Finding available software
+  Software Update found the following new or updated software:
+  * Label: macOS Tahoe 26.0.1-25A362
+      Title: macOS Tahoe 26.0.1, Version: 26.0.1, Size: 1843200KiB, Recommended: YES, Action: restart,
+
+FAILURE
+  Can't connect to the Apple Software Update server, because you are not connected to the Internet.
+  (No network, a proxy or firewall is blocking swscan.apple.com, or a content filter is in the way.)
+
+---
+
+COMMAND
+  sudo softwareupdate -ia [--restart]
+
+DESCRIPTION
+  Installs all available updates, and restarts if one requires it when --restart is given. On Apple silicon, installing macOS updates from the CLI asks an admin (volume owner) to authenticate.
+
+USAGE
+  sudo softwareupdate -ia --restart
+
+SUCCESS
+  Downloading macOS Tahoe 26.0.1
+  Downloaded: macOS Tahoe 26.0.1
+  Restarting...
+
+FAILURE
+  Failed to authenticate
+  (Apple silicon needs volume-owner credentials. Enter them at the prompt, never as a --password argument, or install from System Settings.)
+
+---
+
+COMMAND
+  softwareupdate --fetch-full-installer [--full-installer-version <ver>]
+
+DESCRIPTION
+  Downloads the full "Install macOS" app to /Applications. Use it for upgrades, USB installer media, or erase-and-install.
+
+USAGE
+  softwareupdate --fetch-full-installer --full-installer-version 26.0.1
+
+SUCCESS
+  Scanning for 26.0.1 installer
+  Installing: 100.0%
+  Install finished successfully
+
+FAILURE
+  Install failed with error: Update not found
+  (That version is not offered for this Mac model or is no longer served. List options with softwareupdate --list-full-installers.)
+
+---
+
+COMMAND
+  pkgutil --pkgs | --pkg-info <id> | --files <id>
+
+DESCRIPTION
+  Queries the receipts database of installed packages. Use it to confirm that a package installed, check its version, or see which files it laid down.
+
+USAGE
+  pkgutil --pkg-info com.googlecode.munki.core
+
+SUCCESS
+  package-id: com.googlecode.munki.core
+  version: 6.6.3.4710
+  volume: /
+  location: /
+  install-time: 1759561200
+
+FAILURE
+  No receipt for 'com.googlecode.munki.core' found at '/'.
+  (The package was never installed, or the ID is wrong - search with pkgutil --pkgs | grep -i munki.)
+
+---
+
+COMMAND
+  sudo installer -pkg <path.pkg> -target / [-verbose]
+
+DESCRIPTION
+  Installs a flat package from the command line. Use it to test a package outside Munki and see the real installer error.
+
+USAGE
+  sudo installer -pkg "/Library/Managed Installs/Cache/MicrosoftTeams.pkg" -target / -verbose
+
+SUCCESS
+  installer: Package name is Microsoft Teams
+  installer: Installing at base path /
+  installer: The install was successful.
+
+FAILURE
+  installer: Error - the package path specified was invalid: '/Library/Managed Installs/Cache/MicrosoftTeams.pkg'.
+  (Wrong path or a missing file. Without sudo you get: installer: Must be run as root to install this package.)
+
+---
+
+COMMAND
+  sudo managedsoftwareupdate [-vvv] [--checkonly|--installonly]
+
+DESCRIPTION
+  Runs a Munki check and install by hand and shows why a client is not updating. Watch the output, then read /Library/Managed Installs/Logs/ManagedSoftwareUpdate.log.
+
+USAGE
+  sudo managedsoftwareupdate -vvv --checkonly
+
+SUCCESS
+  Managed Software Update Tool
+  Starting...
+  Checking for available updates...
+  The following items will be installed or upgraded:
+      + GoogleChrome-141.0.7390.55
+  Finishing...
+
+FAILURE
+  ERROR: Could not retrieve managed install primary manifest.
+  (The repo is unreachable or the ClientIdentifier has no manifest. Check SoftwareRepoURL with the defaults read entry below and test it with curl -sI <repo>/catalogs/production.)
+
+---
+
+COMMAND
+  defaults read <domain|plist> [key]
+
+DESCRIPTION
+  Reads preference values. For Munki clients, read /Library/Preferences/ManagedInstalls to confirm the repo URL and client identifier.
+
+USAGE
+  defaults read /Library/Preferences/ManagedInstalls SoftwareRepoURL
+
+SUCCESS
+  https://munki.example.com/repo
+  (Example URL - the production repo URL is still [FILL IN] in the Munki guide.)
+
+FAILURE
+  The domain/default pair of (/Library/Preferences/ManagedInstalls, SoftwareRepoURL) does not exist
+  (The key is not set in the plist. It may come from a configuration profile instead - check with profiles show.)
+
+---
+
+
+SERVICES, LOGS AND PREFERENCES
+================================================================================
+
+COMMAND
+  launchctl list [label]
+
+DESCRIPTION
+  Lists loaded launchd jobs with their PID and last exit status. Run it without sudo for user agents and with sudo for system daemons.
+
+USAGE
+  sudo launchctl list | grep -i munki
+
+SUCCESS
+  -       0       com.googlecode.munki.managedsoftwareupdate-check
+  -       0       com.googlecode.munki.managedsoftwareupdate-install
+  -       0       com.googlecode.munki.logouthelper
+
+FAILURE
+  (No output.)
+  (The job is not loaded. Without sudo you only see the user domain, so the system daemons will be missing.)
+
+---
+
+COMMAND
+  sudo launchctl bootout system/<label>   |   launchctl bootout gui/<uid>/<label>
+
+DESCRIPTION
+  Unloads a daemon or agent from its launchd domain. This is a [CHANGE]: record the plist path so you can restore it with launchctl bootstrap.
+
+USAGE
+  sudo launchctl bootout system/com.example.updater
+
+SUCCESS
+  (No output. sudo launchctl list | grep com.example.updater now returns nothing.)
+
+FAILURE
+  Boot-out failed: 3: No such process
+  (The label is not loaded in that domain. Check the label, and use gui/$(id -u) for user agents.)
+
+---
+
+COMMAND
+  sudo launchctl kickstart -k system/<label>
+
+DESCRIPTION
+  Restarts a running system service, and -k kills it first. It is the supported way to restart opendirectoryd, sshd, and similar daemons.
+
+USAGE
+  sudo launchctl kickstart -k system/com.apple.opendirectoryd
+
+SUCCESS
+  (No output. The service restarts with a new PID in sudo launchctl list | grep opendirectoryd.)
+
+FAILURE
+  Could not find service "com.apple.opendirectory" in domain for system
+  (Typo in the label. Some Apple services are SIP-protected and cannot be kickstarted.)
+
+---
+
+COMMAND
+  log show --predicate '<expr>' --last <time> [--style compact]
+
+DESCRIPTION
+  Searches the unified log for past events by process, subsystem, or message text. Always set --last so the search does not scan days of logs.
+
+USAGE
+  log show --predicate 'process == "Microsoft Teams" AND messageType == error' --last 1h --style compact
+
+SUCCESS
+  Timestamp               Ty Process[PID:TID]
+  2026-10-04 09:41:07.112 E  Microsoft Teams[4821:5a2f1] [com.microsoft.teams2:network] Request failed: -1001
+
+FAILURE
+  log: Couldn't parse predicate: process = = "Teams"
+  (Predicate syntax error. Use == and double quotes inside single quotes.)
+
+---
+
+COMMAND
+  log stream --predicate '<expr>' [--level info|debug]
+
+DESCRIPTION
+  Shows matching unified log entries live while the user reproduces the problem. Press Ctrl-C to stop.
+
+USAGE
+  log stream --predicate 'subsystem == "com.apple.opendirectoryd"' --level info
+
+SUCCESS
+  Filtering the log data using "subsystem == "com.apple.opendirectoryd""
+  2026-10-04 09:44:12.501 Df opendirectoryd[188]: [com.apple.opendirectoryd:auth] Authentication succeeded for jdoe
+
+FAILURE
+  Filtering the log data using "subsystem == "com.apple.opendirectoryd""
+  (Nothing else appears: the predicate matches no events, or the event needs --level debug.)
+
+---
+
+COMMAND
+  sudo defaults write <plist> <key> [-string|-bool|-int] <value>
+
+DESCRIPTION
+  Writes a preference value. This is a [CHANGE]: read the current value first and record it as your rollback. Managed settings are better set by configuration profile.
+
+USAGE
+  sudo defaults write /Library/Preferences/ManagedInstalls SoftwareRepoURL -string "https://munki.example.com/repo"
+
+SUCCESS
+  (No output. Confirm with defaults read /Library/Preferences/ManagedInstalls SoftwareRepoURL.)
+
+FAILURE
+  Could not write domain /Library/Preferences/ManagedInstalls; exiting
+  (You need sudo for /Library/Preferences.)
+
+---
+
+
+MDM AND ENROLLMENT
+================================================================================
+
+COMMAND
+  profiles status -type enrollment
+
+DESCRIPTION
+  Shows whether the Mac is MDM-enrolled and whether enrollment came through Apple Business Manager (ADE/DEP). Enrolled via DEP: No on a supposedly supervised Mac is a finding.
+
+USAGE
+  profiles status -type enrollment
+
+SUCCESS
+  Enrolled via DEP: Yes
+  MDM enrollment: Yes (User Approved)
+
+FAILURE
+  Enrolled via DEP: No
+  MDM enrollment: No
+  (Not enrolled. An MDM is not yet confirmed here - see the MDM and ABM guide before chasing this.)
+
+---
+
+COMMAND
+  profiles list [-all]   |   sudo profiles show -type enrollment
+
+DESCRIPTION
+  Lists installed configuration profiles, or shows the ADE enrollment record cached from Apple. Do not run remove-all profile commands, because they can break enrollment.
+
+USAGE
+  sudo profiles show -type enrollment
+
+SUCCESS
+  Device Enrollment configuration:
+  {
+      ConfigurationURL = "https://mdm.example.com/enroll";
+      IsMDMUnremovable = 1;
+      OrganizationName = "Example Organization";
+  }
+
+FAILURE
+  There are no configuration profiles installed
+  (From profiles list: nothing is installed. profiles show without sudo returns a permission error.)
+
+---
+
+COMMAND
+  sudo profiles renew -type enrollment
+
+DESCRIPTION
+  Makes the Mac check its ADE assignment with Apple again and shows the enrollment prompt. Use it after assigning a device to an MDM server in Apple Business Manager.
+
+USAGE
+  sudo profiles renew -type enrollment
+
+SUCCESS
+  (A "Device Enrollment" notification appears for the user to approve.)
+
+FAILURE
+  profiles: Device Enrollment configuration was not found.
+  (The serial is not assigned to an MDM server in ABM, or the Mac cannot reach Apple's servers.)
+
+---
+
+COMMAND
+  log show --predicate 'process == "mdmclient"' --last <time>
+
+DESCRIPTION
+  Shows MDM client activity: check-ins, commands received, and profile install errors. Pair it with subsystem == "com.apple.ManagedClient" for payload problems.
+
+USAGE
+  log show --predicate 'process == "mdmclient"' --last 2h --style compact
+
+SUCCESS
+  2026-10-04 08:02:15.330 Df mdmclient[412:2b1c] [com.apple.ManagedClient:MDMDaemon] Processing server request: InstallProfile
+
+FAILURE
+  2026-10-04 08:02:16.004 E  mdmclient[412:2b1c] [com.apple.ManagedClient:HTTPUtil] Unable to connect to MDM server: The request timed out.
+  (Network, proxy, or MDM server problem. Check DNS and firewall rules to the MDM host and to *.push.apple.com.)
+
+---
+
+
+SECURITY AND AUDIT
+================================================================================
+
+COMMAND
+  fdesetup status   |   sudo fdesetup list
+
+DESCRIPTION
+  Shows the FileVault state, and with list, which users can unlock the disk. Escrow the recovery key in the approved location, never in a ticket.
+
+USAGE
+  fdesetup status
+
+SUCCESS
+  FileVault is On.
+
+FAILURE
+  FileVault is Off.
+  (The disk is not encrypted, which is a compliance finding. Enable it with an MDM payload or sudo fdesetup enable and escrow the key.)
+
+---
+
+COMMAND
+  csrutil status
+
+DESCRIPTION
+  Shows whether System Integrity Protection is on. It should always be enabled, and it can only be changed from Recovery.
+
+USAGE
+  csrutil status
+
+SUCCESS
+  System Integrity Protection status: enabled.
+
+FAILURE
+  System Integrity Protection status: disabled.
+  (SIP is off. Find out why, then run csrutil enable from Recovery and reboot.)
+
+---
+
+COMMAND
+  spctl --status   |   spctl -a -vv <app>
+
+DESCRIPTION
+  Checks that Gatekeeper is on, or checks an app's signature and notarization. Do not turn Gatekeeper off to work around a blocked app.
+
+USAGE
+  spctl -a -vv "/Applications/Microsoft Teams.app"
+
+SUCCESS
+  /Applications/Microsoft Teams.app: accepted
+  source=Notarized Developer ID
+  origin=Developer ID Application: Microsoft Corporation (UBF8T346G9)
+
+FAILURE
+  /Applications/Unknown.app: rejected
+  source=no usable signature
+  (The app is unsigned or tampered with. Treat it as suspect and do not bypass Gatekeeper.)
+
+---
+
+COMMAND
+  tccutil reset <service> [bundle-id]
+
+DESCRIPTION
+  Resets privacy (TCC) approvals so the app asks again for camera, microphone, screen recording, and similar access. Always give a bundle ID, so you reset one app rather than all of them.
+
+USAGE
+  tccutil reset Camera com.microsoft.teams2
+
+SUCCESS
+  Successfully reset Camera approval status for com.microsoft.teams2
+
+FAILURE
+  tccutil: No such bundle identifier "com.microsoft.teams": The operation couldn't be completed.
+  (Wrong bundle ID - look it up with osascript -e 'id of app "Microsoft Teams"'.)
+
+---
+
+COMMAND
+  sudo sysadminctl -secureTokenStatus <user>
+
+DESCRIPTION
+  Shows whether a user has a Secure Token, which is needed to unlock FileVault and to authorize updates on Apple silicon. Run it when a user cannot unlock the disk or install updates.
+
+USAGE
+  sudo sysadminctl -secureTokenStatus jdoe
+
+SUCCESS
+  2026-10-04 09:50:11.402 sysadminctl[2201:3a1f] Secure token is ENABLED for user Jane Doe
+
+FAILURE
+  2026-10-04 09:50:11.402 sysadminctl[2201:3a1f] Secure token is DISABLED for user Jane Doe
+  (No token, which is common for AD mobile accounts. A token-holding admin must grant one interactively, and passwords must not go on the command line.)
+
+---
+
+COMMAND
+  security find-certificate -c "<name>" [-a] [-p] <keychain>
+
+DESCRIPTION
+  Finds certificates in a keychain by common name. Pipe the -p output to openssl to read the subject and expiry. It is read-only and never exports private keys.
+
+USAGE
+  security find-certificate -c "mail.example.com" -p /Library/Keychains/System.keychain | openssl x509 -noout -subject -enddate
+
+SUCCESS
+  subject=CN=mail.example.com
+  notAfter=Feb  9 23:59:59 2027 GMT
+
+FAILURE
+  security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.
+  (There is no certificate with that name in this keychain. Try the login keychain at ~/Library/Keychains/login.keychain-db.)
+
+---
+
+COMMAND
+  security list-keychains   |   security dump-keychain <keychain>   (never -d)
+
+DESCRIPTION
+  Lists the keychain search list, or dumps item attributes (labels, services, accounts) for an audit. Never add -d, which decrypts and prints secrets.
+
+USAGE
+  security dump-keychain /Library/Keychains/System.keychain | grep '"labl"'
+
+SUCCESS
+      "labl"<blob>="com.apple.systemdefault"
+      "labl"<blob>="com.apple.kerberos.kdc"
+
+FAILURE
+  security: dump-keychain: The specified keychain could not be found.
+  (Wrong keychain path. Run security list-keychains -d user or -d system for the valid paths.)
+
+---
+
+================================================================================
+Generated by Claude | For internal/reference use only
+================================================================================

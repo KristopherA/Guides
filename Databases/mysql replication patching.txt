@@ -1,0 +1,350 @@
+Good catch—row-based replication (RBR) changes a few things operationally. It’s generally safer during patching (less drift risk), but it also means:
+	•	Replica consistency depends entirely on relay logs being applied cleanly
+	•	Large transactions can create replication lag spikes
+	•	You must be more deliberate about ensuring the replica is fully caught up before touching the master
+
+Below is your updated runbook, tightened specifically for row-based replication.
+
+⸻
+
+Key Differences with Row-Based Replication
+
+Before the steps, here’s what actually matters:
+
+What’s safer
+	•	No statement ambiguity (no non-deterministic SQL issues)
+	•	Fewer data drift risks during restart cycles
+
+What you must watch more closely
+	•	Seconds_Behind_Master can lie during large transactions
+	•	Replica may show 0 but still be applying a large event
+	•	Relay log backlog is the real signal
+
+So we add:
+	•	relay log position checks
+	•	SQL thread state validation
+	•	optional read-only enforcement during master reboot
+
+⸻
+
+Updated Procedure (RBR-Aware)
+
+⸻
+
+Phase 0 — Pre-Checks (Enhanced)
+
+1) Confirm replication mode is actually ROW
+
+On db01.example.com
+
+mysql -e "SHOW VARIABLES LIKE 'binlog_format';"
+
+Expected:
+
+binlog_format = ROW
+
+
+⸻
+
+2) Confirm replica is fully caught up (STRONG CHECK)
+
+On db02.example.com
+
+mysql -e "SHOW REPLICA STATUS\G"
+
+Check ALL of these:
+	•	Replica_IO_Running: Yes
+	•	Replica_SQL_Running: Yes
+	•	Seconds_Behind_Master: 0 (not just “low”)
+	•	Relay_Log_Space is stable (not growing)
+	•	Slave_SQL_Running_State contains:
+	•	Replica has read all relay log
+OR
+	•	Waiting for source to send event
+
+👉 This is critical for RBR
+If it says something like:
+	•	Reading event from the relay log
+	•	Applying batch of row changes
+
+→ the replica is still applying a large transaction
+
+Wait until fully idle before proceeding
+
+⸻
+
+3) Optional: Force replica read-only safety
+
+On db02.example.com
+
+mysql -e "SET GLOBAL read_only = ON;"
+mysql -e "SET GLOBAL super_read_only = ON;"
+
+(This prevents accidental writes during maintenance)
+
+⸻
+
+Phase 1 — Patch Replica (db02.example.com)
+
+4) Stop replication cleanly
+
+mysql -e "STOP REPLICA;"
+
+👉 For RBR this ensures:
+	•	No partially applied row events mid-upgrade
+
+⸻
+
+5) Patch system
+
+sudo apt update
+sudo DEBIAN_FRONTEND=noninteractive apt -y dist-upgrade
+sudo apt -y autoremove
+sudo apt -y autoclean
+
+
+⸻
+
+6) Reboot
+
+sudo reboot
+
+
+⸻
+
+7) After reboot — verify MySQL + restart replication
+
+sudo systemctl status mysql --no-pager
+mysql -e "START REPLICA;"
+mysql -e "SHOW REPLICA STATUS\G"
+
+
+⸻
+
+8) RBR-Specific Catch-Up Validation
+
+Instead of trusting only Seconds_Behind_Master, use:
+
+watch -n 5 'mysql -e "SHOW REPLICA STATUS\G" | egrep "Replica_IO_Running:|Replica_SQL_Running:|Seconds_Behind_Master:|Relay_Log_Space:|Slave_SQL_Running_State:"'
+
+You are waiting for:
+	•	IO + SQL threads = Yes
+	•	Seconds_Behind_Master = 0
+	•	Relay_Log_Space stops increasing
+	•	SQL state shows:
+	•	Replica has read all relay log
+OR idle state
+
+👉 Do NOT proceed until fully idle
+(This matters more with RBR than statement-based)
+
+⸻
+
+Phase 2 — Master Preparation (db01.example.com)
+
+9) Ensure replica is 100% caught up
+
+Run again on db02.example.com:
+
+mysql -e "SHOW REPLICA STATUS\G"
+
+If even slightly behind → wait
+
+⸻
+
+10) (Recommended) Temporarily block writes on master
+
+This is optional but strongly recommended for RBR environments:
+
+On db01.example.com
+
+mysql -e "SET GLOBAL read_only = ON;"
+mysql -e "SET GLOBAL super_read_only = ON;"
+
+👉 Why:
+	•	Prevents new row events during shutdown
+	•	Guarantees clean replication boundary
+
+⸻
+
+11) Confirm final sync point
+
+On db01.example.com
+
+mysql -e "SHOW MASTER STATUS\G"
+
+On db02.example.com
+
+mysql -e "SHOW REPLICA STATUS\G"
+
+Verify:
+	•	Relay log fully applied
+	•	Positions aligned (Exec_Master_Log_Pos ~ Read_Master_Log_Pos)
+
+⸻
+
+Phase 3 — Patch Master (db01.example.com)
+
+12) Patch system
+
+sudo apt update
+sudo DEBIAN_FRONTEND=noninteractive apt -y dist-upgrade
+sudo apt -y autoremove
+sudo apt -y autoclean
+
+
+⸻
+
+13) Reboot
+
+sudo reboot
+
+
+⸻
+
+14) After reboot — validate master
+
+sudo systemctl status mysql --no-pager
+mysql -e "SHOW MASTER STATUS\G"
+
+
+⸻
+
+15) Re-enable writes
+
+mysql -e "SET GLOBAL super_read_only = OFF;"
+mysql -e "SET GLOBAL read_only = OFF;"
+
+
+⸻
+
+Phase 4 — Final Replication Validation
+
+16) Verify replica reconnects
+
+On db02.example.com
+
+mysql -e "SHOW REPLICA STATUS\G"
+
+If needed:
+
+mysql -e "START REPLICA;"
+
+
+⸻
+
+17) Final RBR Health Check
+
+watch -n 5 'mysql -e "SHOW REPLICA STATUS\G" | egrep "Replica_IO_Running:|Replica_SQL_Running:|Seconds_Behind_Master:|Relay_Log_Space:|Last_SQL_Error:|Last_IO_Error:"'
+
+Success state:
+	•	IO thread: Yes
+	•	SQL thread: Yes
+	•	Seconds_Behind_Master: 0
+	•	No errors
+	•	Relay log stable
+
+⸻
+
+RBR-Specific Failure Scenarios to Watch
+
+1) Replica stuck applying rows
+
+Symptom:
+
+Slave_SQL_Running_State: Applying batch of row changes
+
+Action:
+	•	Wait (normal for large transactions)
+	•	If stuck long-term → investigate:
+
+mysql -e "SHOW PROCESSLIST;"
+
+
+⸻
+
+2) Duplicate key / row conflicts
+
+RBR can surface these after restart:
+
+Last_SQL_Error: Duplicate entry...
+
+Do NOT blindly skip.
+
+Investigate:
+	•	data drift
+	•	previous partial writes
+
+⸻
+
+3) Relay log corruption (rare but possible after crash)
+
+Fix approach:
+
+mysql -e "STOP REPLICA;"
+mysql -e "RESET REPLICA;"
+# Then reconfigure replication from master position
+
+(Only if absolutely required)
+
+⸻
+
+Condensed RBR Runbook
+
+Replica
+
+mysql -e "STOP REPLICA;"
+sudo apt update
+sudo DEBIAN_FRONTEND=noninteractive apt -y dist-upgrade
+sudo reboot
+
+After:
+
+mysql -e "START REPLICA;"
+mysql -e "SHOW REPLICA STATUS\G"
+
+WAIT until:
+	•	fully caught up
+	•	relay logs idle
+
+⸻
+
+Master
+
+mysql -e "SET GLOBAL super_read_only = ON;"
+sudo apt update
+sudo DEBIAN_FRONTEND=noninteractive apt -y dist-upgrade
+sudo reboot
+
+After:
+
+mysql -e "SET GLOBAL super_read_only = OFF;"
+
+
+⸻
+
+Final
+
+mysql -e "SHOW REPLICA STATUS\G"
+
+
+⸻
+
+Bottom Line (Straight Talk)
+
+With row-based replication, the real mistake people make is:
+
+“Seconds_Behind_Master = 0, we’re good”
+
+That’s not always true.
+
+The real safe condition is:
+	•	Replica SQL thread is idle
+	•	Relay logs are fully consumed
+	•	No large transaction still applying
+
+If you stick to that, this becomes a very low-risk maintenance.
+
+⸻
+
+If you want, I can tighten this further into a production-grade change ticket format (with rollback + outage impact + validation checklist your CAB will accept cleanly).

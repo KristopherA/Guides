@@ -1,0 +1,32 @@
+Pretty sure it’s 10.0.1.9
+[9:33 AM]1.8 is the West stack on 7
+[9:33 AM](you have to flip it to All first and then MAC)
+[9:34 AM]You have to change it to All first or it’ll flip (edited) 
+[9:35 AM](or used to)
+[9:35 AM]You can do it all in Port PVID now
+[9:35 AM]I missed what port they’re in
+tech  [9:35 AM]
+8/30
+sysadmin  [9:36 AM]
+8/0/30 is not on the server vlan
+tech  [9:36 AM]
+add 1?
+sysadmin  [9:36 AM]
+So I don’t know how Dynamics is working unless that VM is setup to use DNS instead of the way the previous one was
+[9:36 AM]
+Select the port and scroll up
+tech  [9:36 AM]
+Same VM and all
+[9:36 AM]I did zero different
+[9:37 AM]ok
+[9:37 AM]add the 1
+sysadmin  [9:37 AM]
+PVID 1
+VLAN Member 1,4,5
+VLAN Tag 4,5[9:37 AM]Then save/Apply
+tech  [9:38 AM]
+Cool thanks
+sysadmin  [9:38 AM]
+PVID --> “With no vlan tag  put it in vlan 1”
+VLAN Member --> This port is a member of these vlans
+VLAN Tag --> This port only access tagged packets for these vlans

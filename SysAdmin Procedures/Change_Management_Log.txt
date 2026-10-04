@@ -1,0 +1,148 @@
+================================================================================
+  CHANGE MANAGEMENT LOG & TEMPLATE
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Maintainer: it@example.com
+
+PURPOSE: Document all changes to production systems. Every production change
+         must have a completed record. "If it's not documented, it didn't happen."
+
+CHANGE CATEGORIES:
+  Standard  — Low risk, pre-approved recurring task (e.g., monthly patching)
+  Normal    — Planned change with lead time, requires review
+  Emergency — Unplanned, required to restore/protect service, document ASAP
+
+
+================================================================================
+CHANGE RECORD TEMPLATE
+================================================================================
+Copy and fill out one block per change. Paste below the line in the log.
+
+────────────────────────────────────────────────────────────────────────────────
+CHANGE ID:        CHG-YYYY-NNN          (e.g., CHG-2026-042)
+DATE / TIME:      YYYY-MM-DD HH:MM
+ADMIN:            (name and email)
+CATEGORY:         [ ] Standard  [ ] Normal  [ ] Emergency
+PRIORITY:         [ ] Low  [ ] Medium  [ ] High  [ ] Critical
+
+SYSTEM(S) AFFECTED:
+  Hostname(s):    __________________________________________
+  Service(s):     __________________________________________
+  Users affected: __________________________________________
+
+CHANGE DESCRIPTION:
+  What is being changed and why:
+  ______________________________________________________________________
+  ______________________________________________________________________
+
+CHANGE DETAILS (specific commands or steps taken):
+  1. __________________________________________________________________
+  2. __________________________________________________________________
+  3. __________________________________________________________________
+  4. __________________________________________________________________
+  5. __________________________________________________________________
+
+PRE-CHANGE STATE:
+  (package versions, service states, config snapshots, etc.)
+  ______________________________________________________________________
+
+RISK ASSESSMENT:
+  Risk level:       [ ] Low  [ ] Medium  [ ] High
+  Potential impact: ___________________________________________________
+  Blast radius:     ___________________________________________________
+
+ROLLBACK PLAN:
+  How to undo this change if it fails:
+  ______________________________________________________________________
+  ______________________________________________________________________
+  Estimated rollback time: ____________________________________________
+
+TESTING / VERIFICATION PERFORMED:
+  [ ] Tested in non-production first
+  [ ] Dry run / simulation performed
+  [ ] Post-change verification steps:
+    ___________________________________________________________________
+    ___________________________________________________________________
+
+APPROVAL:
+  Approved by:    _____________________  Date: _______________________
+  (For Standard changes, self-approved is acceptable with documentation)
+
+OUTCOME:
+  [ ] Successful — no issues
+  [ ] Successful — minor issues (describe below)
+  [ ] Failed — rolled back (describe below)
+  [ ] Failed — escalated (describe below)
+
+RESULT NOTES:
+  ______________________________________________________________________
+  ______________________________________________________________________
+
+TICKET / REFERENCE:   _______________________________________________
+────────────────────────────────────────────────────────────────────────────────
+
+
+================================================================================
+COMPLETED CHANGE LOG
+================================================================================
+
+(Paste completed change records below this line, newest first)
+
+
+────────────────────────────────────────────────────────────────────────────────
+CHANGE ID:        CHG-2026-001
+DATE / TIME:      2026-06-29 14:00
+ADMIN:            Sysadmin (it@example.com)
+CATEGORY:         [X] Standard
+PRIORITY:         [X] Medium
+
+SYSTEM(S) AFFECTED:
+  Hostname(s):    All Ubuntu servers (web01, app01, db01, fileserver)
+  Service(s):     System packages
+  Users affected: None (after-hours window)
+
+CHANGE DESCRIPTION:
+  Monthly security patch cycle — June 2026. Applied all available apt security
+  updates. See Patch_Management_Workflow.txt for full procedure.
+
+CHANGE DETAILS:
+  1. sudo apt update && apt list --upgradable (reviewed output)
+  2. sudo apt full-upgrade -y -o Dpkg::Options::="--force-confdef"
+  3. sudo apt autoremove -y
+  4. Rebooted servers requiring kernel updates (web01, app01)
+  5. Verified all services operational post-reboot
+
+PRE-CHANGE STATE:
+  Kernel: 6.8.0-57-generic (web01, app01)
+  Pending packages: 14 (3 security-critical)
+
+RISK ASSESSMENT:
+  Risk level:       [X] Low
+  Potential impact: Service restart required for nginx (web01)
+  Blast radius:     Individual servers, no cross-service dependencies
+
+ROLLBACK PLAN:
+  Boot to previous kernel via GRUB Advanced menu.
+  Estimated rollback time: 10 minutes per server
+
+TESTING / VERIFICATION PERFORMED:
+  [X] Post-change verification steps:
+    - systemctl --failed (all clear)
+    - curl -Is https://app.example.com (HTTP 200)
+    - ss -tlnp (all expected ports listening)
+
+APPROVAL:   Self-approved (Standard change)
+
+OUTCOME:    [X] Successful — no issues
+
+RESULT NOTES:
+  All 4 servers updated. web01 and app01 rebooted for kernel update.
+  New kernel: 6.8.0-60-generic. No service issues.
+
+TICKET / REFERENCE:   INC-2026-0629-patch
+────────────────────────────────────────────────────────────────────────────────
+
+================================================================================
+END OF LOG
+================================================================================

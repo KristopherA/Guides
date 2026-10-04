@@ -1,0 +1,222 @@
+================================================================================
+  INVENTORY & ASSET REFERENCE
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+
+INSTRUCTIONS:
+  - Update this file whenever hardware is added, changed, or decommissioned.
+  - Update the SSL/Certificate section whenever certs are renewed.
+  - Review the entire document quarterly.
+  - Store a copy in your password manager / secure backup location.
+
+================================================================================
+SECTION 1: DOMAIN CONTROLLERS / AD INFRASTRUCTURE
+================================================================================
+
+  Hostname        IP Address      OS                  Role                    FSMO Roles Held             Admin Account   Notes
+  ─────────────── ─────────────── ─────────────────── ─────────────────────── ─────────────────────────── ─────────────── ──────────────────────
+  dc01            10.0.0.10       Windows Server 2022  Primary DC              PDC, RID, Infrastructure     administrator   Primary site
+  dc02            10.0.0.11       Windows Server 2022  Secondary DC            Schema, Domain Naming        administrator   Secondary/backup site
+  (add more rows as needed)
+
+FSMO ROLE VERIFICATION COMMAND:
+  netdom query fsmo
+
+CURRENT DOMAIN INFORMATION:
+  Domain Name (FQDN):     example.com
+  NetBIOS Name:           EXAMPLE
+  Forest Functional Level: Windows Server 2016
+  Domain Functional Level: Windows Server 2016
+  AD Recycle Bin:         [ ] Enabled  [ ] Disabled
+  Sites:                  Default-First-Site-Name, (add others)
+
+
+================================================================================
+SECTION 2: UBUNTU 24.04 LTS SERVERS
+================================================================================
+
+  Hostname        IP Address      Role                    OS Version        RAM     CPU     Disk        Admin User   AD Joined   Last Patched    Notes
+  ─────────────── ─────────────── ─────────────────────── ───────────────── ─────── ─────── ─────────── ──────────── ─────────── ─────────────── ──────────────────────
+  web01           10.0.1.10       Web / Nginx             Ubuntu 24.04 LTS  8GB     4vCPU   100GB SSD   ubuntu       Yes         2026-06-29      Public-facing HTTPS
+  app01           10.0.1.11       Application Server      Ubuntu 24.04 LTS  16GB    8vCPU   200GB SSD   ubuntu       Yes         2026-06-29
+  db01            10.0.1.12       PostgreSQL 16           Ubuntu 24.04 LTS  32GB    8vCPU   500GB SSD   ubuntu       Yes         2026-06-29      DB server - no direct internet
+  fileserver      10.0.1.13       Samba / File Server     Ubuntu 24.04 LTS  8GB     4vCPU   2TB HDD     ubuntu       Yes         2026-06-29
+  backup          10.0.1.50       Backup Server           Ubuntu 24.04 LTS  8GB     4vCPU   10TB HDD    ubuntu       No          2026-06-29      Rsync destination
+  (add more rows)
+
+COMMANDS TO VERIFY SERVER INFO:
+  # OS version and kernel:
+  hostnamectl
+  # IP and interfaces:
+  ip addr show
+  # RAM/CPU:
+  free -h && nproc
+  # Disk:
+  df -hT
+  # AD join status:
+  realm list
+
+
+================================================================================
+SECTION 3: macOS WORKSTATIONS
+================================================================================
+
+  Asset Tag   Hostname              Serial Number    Model                  macOS Version   RAM     Assigned User          AD Joined   MDM Enrolled   FileVault   Last Updated    Notes
+  ─────────── ───────────────────── ──────────────── ────────────────────── ─────────────── ─────── ────────────────────── ─────────── ────────────── ─────────── ─────────────── ──────────────────────
+  IT-001      ws-doe                XXXXXXXXXXX      MacBook Pro 14" M3     15.4            16GB    John Doe               Yes         Yes            Yes         2026-06-15
+  IT-002      ws-smith              XXXXXXXXXXX      MacBook Pro 14" M3     15.4            16GB    Jane Smith             Yes         Yes            Yes         2026-06-15
+  IT-003      ws-jones              XXXXXXXXXXX      Mac mini M4            15.4            16GB    Bob Jones              Yes         Yes            Yes         2026-06-20
+  (add more rows)
+
+COMMANDS TO GET MAC INFO:
+  # macOS version:
+  sw_vers
+  # Serial number:
+  system_profiler SPHardwareDataType | grep "Serial Number"
+  # FileVault status:
+  fdesetup status
+  # MDM enrollment:
+  sudo profiles list -all | grep -i MDM
+  # AD bind status:
+  dsconfigad -show
+
+
+================================================================================
+SECTION 4: NETWORK INFRASTRUCTURE
+================================================================================
+
+  Device          Hostname / IP       Model / OS           Role                    Location        Admin URL / Access          Notes
+  ─────────────── ─────────────────── ──────────────────── ─────────────────────── ─────────────── ─────────────────────────── ──────────────────────
+  Core Switch     10.0.0.1            Cisco Catalyst xxxx  Core switching          Server room     ssh admin@10.0.0.1          VLAN config
+  Edge Router     10.0.0.254          PFsense / Cisco      Internet gateway        Server room     https://10.0.0.254          Firewall rules
+  AP Controller   10.0.0.5            UniFi Controller     Wi-Fi management        Server room     https://10.0.0.5:8443       Corporate + Guest SSIDs
+  IPMI / iDRAC    10.0.0.20-29        (per server)         Out-of-band mgmt        Server room     https://10.0.0.2x           One per physical server
+  (add more rows)
+
+VLANs:
+  VLAN ID    Name                Subnet              Purpose
+  ────────── ─────────────────── ─────────────────── ──────────────────────────────────────────
+  10         Management          10.0.0.0/24         Network gear, servers, IPMI
+  20         Servers             10.0.1.0/24         Ubuntu servers, DCs
+  30         Workstations        10.0.2.0/24         Staff macOS workstations
+  40         Wireless-Corp       10.0.3.0/24         Corporate Wi-Fi (AD auth)
+  50         Wireless-Guest      10.0.4.0/24         Guest Wi-Fi (isolated)
+  60         Printers            10.0.5.0/24         Printers / IoT
+
+
+================================================================================
+SECTION 5: DNS RECORDS (KEY ENTRIES)
+================================================================================
+
+  Record Type   Hostname                          Value/IP            TTL     Notes
+  ───────────── ───────────────────────────────── ─────────────────── ─────── ──────────────────────
+  A             dc01.example.com                  10.0.0.10           300     Primary DC
+  A             dc02.example.com                  10.0.0.11           300     Secondary DC
+  A             web01.example.com                 10.0.1.10           300     Web server
+  A             app.example.com                   203.0.113.10        300     External / public IP
+  CNAME         www.example.com                   app.example.com     300     Web alias
+  MX            example.com                       mail.example.com    3600    Mail server
+  TXT           example.com                       v=spf1 ...          3600    SPF record
+  TXT           _dmarc.example.com                v=DMARC1; ...       3600    DMARC record
+  (add more rows)
+
+EXTERNAL DNS PROVIDER:   ______________________________
+REGISTRAR:               ______________________________
+DOMAIN EXPIRY DATE:      ______________________________
+
+
+================================================================================
+SECTION 6: SSL/TLS CERTIFICATES
+================================================================================
+
+  Domain / Service            Certificate Authority   Issued Date   Expiry Date   Auto-Renew?   Location on Server                  Admin Responsible
+  ─────────────────────────── ─────────────────────── ───────────── ───────────── ───────────── ─────────────────────────────────── ─────────────────
+  app.example.com             Let's Encrypt           2026-05-01    2026-07-30    Yes (certbot) /etc/letsencrypt/live/app.example/   sysadmin
+  internal.example.com        Internal CA             2026-01-01    2027-01-01    No            /etc/ssl/certs/internal.crt          sysadmin
+  *.example.com (wildcard)    DigiCert                2025-09-01    2026-09-01    No            /etc/ssl/certs/wildcard.crt          sysadmin
+  (add more rows)
+
+CHECK EXPIRY OF ALL CERTS (run monthly):
+  # Remote:
+  for domain in app.example.com internal.example.com; do
+    echo -n "$domain: "
+    echo | openssl s_client -connect $domain:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null
+  done
+
+  # Local files:
+  find /etc/ssl/certs /etc/letsencrypt/live -name "*.crt" -o -name "cert.pem" 2>/dev/null | while read cert; do
+    expiry=$(openssl x509 -noout -enddate -in "$cert" 2>/dev/null | cut -d= -f2)
+    echo "$cert: $expiry"
+  done
+
+ALERT THRESHOLD: Renew any certificate expiring within 30 days.
+
+
+================================================================================
+SECTION 7: SERVICE ACCOUNTS AND SCHEDULED TASKS
+================================================================================
+
+Service accounts should be documented here to prevent orphaned tasks during offboarding.
+Do NOT store passwords here — use a password manager.
+
+  Account Name      Purpose                          Servers Used              Owner           Password In           Last Reviewed
+  ───────────────── ──────────────────────────────── ───────────────────────── ─────────────── ───────────────────── ──────────────
+  svc-backup        Rsync backup user                backup, web01, app01      sysadmin        1Password / IT vault  2026-06-01
+  svc-monitoring    Prometheus/Nagios read access     all servers               sysadmin        1Password / IT vault  2026-06-01
+  svc-deploy        CI/CD deployment user             web01, app01              sysadmin        1Password / IT vault  2026-06-01
+  (add more rows)
+
+SCHEDULED TASKS REFERENCE:
+  Task                        Server      Schedule            Log File                        Owner
+  ─────────────────────────── ─────────── ─────────────────── ─────────────────────────────── ──────────────
+  Linux server backup         backup      Daily 02:00         /var/log/backup-linux.log       sysadmin
+  Database backup             backup      Daily 03:00         /var/log/backup-db.log          sysadmin
+  Off-site sync               backup      Weekly Sun 04:00    /var/log/backup-offsite.log     sysadmin
+  AD System State backup      dc01        Daily 01:00         Windows Event Log               sysadmin
+  Certificate renewal check   web01       Weekly Mon 09:00    /var/log/cert-check.log         sysadmin
+  (add more rows)
+
+
+================================================================================
+SECTION 8: THIRD-PARTY SERVICES AND INTEGRATIONS
+================================================================================
+
+  Service              Purpose                     URL                             Account Owner   MFA Enabled   Notes
+  ──────────────────── ─────────────────────────── ─────────────────────────────── ─────────────── ───────────── ──────────────────────
+  Microsoft 365        Email, Teams, SharePoint     portal.microsoft.com            sysadmin        Yes           Tenant ID: xxxxxxxxx
+  MDM (Jamf/Mosyle)    macOS device management      https://example.jamfcloud.com   sysadmin        Yes
+  DNS Provider         External DNS hosting          https://cloudflare.com          sysadmin        Yes           API key in vault
+  Backup (Off-site)    S3/B2 cloud backup storage   https://console.aws.amazon.com  sysadmin        Yes           Bucket: org-backups
+  (add more rows)
+
+
+================================================================================
+SECTION 9: EMERGENCY CONTACTS
+================================================================================
+
+  Role                          Name                Phone               Email                       Notes
+  ───────────────────────────── ─────────────────── ─────────────────── ─────────────────────────── ──────────────────────
+  Primary SysAdmin              ___________________  [PHONE]             it@example.com
+  Secondary SysAdmin / Backup   ___________________  ___________________  ___________________
+  Network Team                  ___________________  ___________________  ___________________
+  Management / Escalation       ___________________  ___________________  ___________________
+  Microsoft Support (M365)      1-800-642-7676      N/A                 https://admin.microsoft.com  Support ticket portal
+  Hardware Vendor (Servers)     ___________________  ___________________  ___________________         Contract #: ________
+  ISP / Network Provider        ___________________  ___________________  ___________________         Account #: _________
+
+
+================================================================================
+SECTION 10: DOCUMENT REVISION HISTORY
+================================================================================
+
+  Date          Updated By          Change Summary
+  ───────────── ─────────────────── ────────────────────────────────────────────────
+  2026-06-29    IT Admin            Initial document created
+  (add rows)
+
+================================================================================
+END OF DOCUMENT
+================================================================================

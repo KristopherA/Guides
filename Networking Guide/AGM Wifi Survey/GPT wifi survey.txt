@@ -1,0 +1,280 @@
+Add the following section after “Prepare the floor survey.”
+
+## WiFi Explorer Pro 3 step-by-step procedure
+
+### A. Configure the survey Mac
+
+Complete this several days before the meeting.
+
+1. Open WiFi Explorer Pro 3 and confirm it can see nearby networks.
+
+2. Grant any requested macOS permissions.
+
+3. Do not update macOS or WiFi Explorer on the meeting day. Test the selected versions beforehand.
+
+4. Create a column profile named `AGM Survey`.
+
+5. Include these columns:
+
+   - Network Name
+   - BSSID
+   - AP Name
+   - Vendor
+   - Signal
+   - Noise
+   - SNR
+   - Band
+   - Channel
+   - Channel Width
+   - PHY Mode or Generation
+   - Channel Utilization
+   - Stations or Clients
+   - Security
+   - Country Code
+   - Last Seen
+   - 802.11k, 802.11v, and 802.11r, if available
+
+6. Arrange the most important columns in this order:
+
+   `Network Name → BSSID → AP Name → Signal → SNR → Band → Channel → Width → Utilization → Clients`
+
+7. Hide unnecessary columns so exported files remain easy to read. WiFi Explorer’s current export commands export the visible columns in the active profile.
+
+8. Create a filter for the attendee SSID. If the SSID is `ExampleCorp-Guest`, enter that exact name in the filter field.
+
+9. If the venue supplies AP names and BSSIDs, add them as annotations:
+
+   - Open **WiFi Explorer Pro 3 → Settings → Annotations**.
+   - Add the BSSID and corresponding venue AP name.
+   - Use names that match the floor plan, such as `AP-Centre-04`.
+   - Export the annotations as a backup.
+
+10. Test saving and reopening a scan.
+
+11. Test exporting displayed networks to CSV.
+
+WiFi Explorer Pro supports custom profiles, advanced filtering, annotations, saved scan results, physical-AP organization, and hundreds of available data fields. [WiFi Explorer Pro 3 features](https://www.intuitibits.com/products/wifiexplorerpro3/)
+
+### B. Perform an active scan at each survey zone
+
+Active mode is the normal choice when the Mac must remain connected to Wi-Fi.
+
+1. Go to the first floor-plan position, such as `Z01`.
+
+2. Place the Mac at normal laptop height with the screen open.
+
+3. Keep the Mac in approximately the same orientation at every test point. A person’s body and the laptop’s orientation can change measured signal strength.
+
+4. Connect the Mac to the attendee Wi-Fi.
+
+5. Open WiFi Explorer Pro 3.
+
+6. Select **Active** in the scan-mode selector.
+
+7. Start or refresh the scan.
+
+8. Leave the Mac stationary for 30–60 seconds and allow several scans to complete.
+
+9. Apply the attendee-SSID filter.
+
+10. Confirm the connected network. WiFi Explorer displays the currently connected network in bold. [Identifying the connected network](https://www.intuitibits.com/faq-items/is-there-a-way-to-know-which-network-i-am-connected-to/)
+
+11. Select the connected BSSID and record:
+
+    - BSSID and AP name
+    - Signal
+    - Noise and SNR
+    - Band
+    - Channel and width
+    - Channel utilization
+    - Advertised client or station count
+    - PHY generation
+    - Last-seen time
+
+12. Sort the filtered results by **Signal**. Record whether another BSSID for the same SSID is significantly stronger than the connected BSSID.
+
+13. Examine the channel or spectrum graph for:
+
+    - Multiple APs using the same channel
+    - Overlapping 2.4 GHz channels
+    - Wide 40, 80, or 160 MHz channels
+    - Nearby non-venue networks
+    - Unexpectedly strong APs from outside the meeting room
+
+14. Examine the **History**, **Utilization**, and **Clients** inspectors when available.
+
+15. Add an annotation to any unexpected BSSID or suspected problem AP.
+
+16. Save the complete scan:
+
+    `ACTIVE-Z01-EMPTY-YYYYMMDD-HHMM`
+
+17. Export the displayed attendee-SSID results to CSV using the same base filename.
+
+18. Record the saved filenames in the survey log.
+
+19. Move to the next zone and repeat.
+
+Use the same Mac for comparative signal measurements. Measurements from different Mac models should not be treated as directly interchangeable.
+
+### C. Perform a passive scan
+
+Passive scanning provides additional beacon, management-frame, and potentially associated-client information. Use it only on the dedicated scanning Mac.
+
+1. Save any active scan already in progress.
+
+2. Confirm that another Mac remains connected for network-performance testing.
+
+3. Open the scan-mode selector.
+
+4. Select **All Channels** under passive scanning.
+
+5. If WiFi Explorer warns that the Mac must disconnect, choose **Disconnect**.
+
+6. Allow the scan to run for at least 60 seconds so it can visit the supported channels repeatedly.
+
+7. Apply the attendee-SSID filter.
+
+8. Organize the results by:
+
+   - Physical AP
+   - AP radio
+   - Network name
+
+9. Inspect and record:
+
+   - All BSSIDs belonging to each physical AP
+   - Radios and bands offered by each AP
+   - Channel and channel width
+   - Signal, noise, and SNR
+   - BSS Load channel utilization
+   - Detected stations or clients
+   - Roaming capabilities
+   - Unexpected or hidden networks
+   - APs missing an expected band or SSID
+
+10. Save the passive scan:
+
+    `PASSIVE-Z01-FULL-YYYYMMDD-HHMM`
+
+11. Export the displayed results to CSV.
+
+12. If requested by the venue administrator, export PCAPNG or PCAP results for detailed analysis. Treat these files as sensitive and transfer them securely.
+
+13. Return the scanner to **Active** mode when finished.
+
+14. Reconnect it to Wi-Fi only if the Mac is also required for connected-client testing.
+
+Passive-mode availability and reliability vary by Mac model, Wi-Fi chipset, and macOS version. If passive scanning is unavailable or produces incomplete results, use Active mode or an approved remote sensor. Current known issues are maintained in the [WiFi Explorer Pro 3 release notes](https://www.intuitibits.com/release-notes/wifiexplorerpro3/).
+
+### D. Investigate a live complaint
+
+When a complaint is received:
+
+1. Assign an incident number, such as `WIFI-014`.
+
+2. Record the exact time and location.
+
+3. Take the connected survey Mac to the reported location.
+
+4. Do not disconnect or forget the network.
+
+5. Open WiFi Explorer Pro in Active mode.
+
+6. Filter to the attendee SSID.
+
+7. Identify the bold connected BSSID.
+
+8. Immediately record:
+
+   - Connected BSSID
+   - Signal and SNR
+   - Band and channel
+   - Channel utilization
+   - Client count, if visible
+   - Strongest alternative BSSID
+   - Difference between connected and strongest BSSID
+
+9. Leave the scan running for at least two minutes while reproducing the complaint.
+
+10. Watch the signal-history graph for sudden drops or instability.
+
+11. Check whether channel utilization remains elevated.
+
+12. Check whether the client count is unusually high relative to nearby APs.
+
+13. Run the gateway, DNS, and local `iperf3` tests from the connected Mac.
+
+14. Save the scan:
+
+    `INC-WIFI-014-Z12-YYYYMMDD-HHMM`
+
+15. Export:
+
+    - The selected connected BSSID
+    - All displayed BSSIDs for the attendee SSID
+
+16. Take a screenshot showing the connected row and important measurements.
+
+17. Send the incident summary and files to the venue administrator.
+
+18. After the venue makes a change, return to the exact location and repeat the test.
+
+19. Save the retest as:
+
+    `RETEST-WIFI-014-Z12-YYYYMMDD-HHMM`
+
+20. Report whether the measurements and user experience improved.
+
+### E. Test for sticky roaming
+
+1. Connect the survey Mac to the attendee SSID.
+
+2. Start a continuous ping to the default gateway.
+
+3. Open WiFi Explorer Pro in Active mode.
+
+4. Filter to the attendee SSID.
+
+5. Note the starting BSSID, signal, band, and channel.
+
+6. Walk slowly along the predetermined roaming route.
+
+7. At every zone boundary, note:
+
+   - Time
+   - Zone
+   - Connected BSSID
+   - Connected-BSSID signal
+   - Strongest alternative BSSID and signal
+   - Ping interruption or packet loss
+
+8. Watch for the bold connected row changing to another BSSID.
+
+9. Flag a potential sticky-client condition when:
+
+   - The connected signal is below approximately −72 dBm.
+   - Another BSSID is at least 10–15 dB stronger.
+   - The Mac remains on the weaker AP.
+   - Gateway latency or packet loss becomes poor.
+
+10. Stop at the problem location for 30 seconds to show that the condition persists.
+
+11. Save the scan and ping result using a common incident number.
+
+12. Ask the venue administrator to correlate the device and time with controller roaming history.
+
+Do not force a roam by toggling Wi-Fi until the evidence has been collected.
+
+### F. Interpret WiFi Explorer results carefully
+
+- **Signal:** Indicates received AP signal at the survey Mac, not the AP’s view of the client.
+- **Noise and SNR:** Useful when available, but values may differ between Mac models and scan modes.
+- **Channel utilization:** Usually derived from information advertised by an AP. It is not a complete spectrum measurement.
+- **Stations/clients:** May be advertised or passively detected. It is not necessarily the controller’s complete client count.
+- **Overlapping networks:** Shows competing Wi-Fi networks, but not non-Wi-Fi interference.
+- **Strong signal with poor service:** Often suggests congestion, retries, client load, DHCP, DNS, or upstream problems rather than missing coverage.
+- **Missing AP:** Could indicate an AP failure, unsupported band, scan limitation, or an AP that does not advertise the expected SSID.
+- **Different strongest and connected BSSIDs:** Useful roaming evidence, but not by itself proof that the network is misconfigured.
+
+The venue controller should be treated as authoritative for client counts, association failures, retries, AP health, DHCP exhaustion, and configured client limits.

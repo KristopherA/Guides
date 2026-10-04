@@ -1,0 +1,16 @@
+UPdating radius for wifi
+
+On omada.example.com
+
+Choose the main office in the location menu in the top left menu. 
+
+Make a profile for the new RADIUS server. 
+
+Settings --> Network Profile --> RADIUS Profile
+
+You'll need the IP of the RADIUS server and the password from 1Pass.
+
+Settings --> WLAN --> Edit ExampleCorp-WiFi --> RADIUS profile --> flip from auth.example.com to auth4.example.com
+
+
+

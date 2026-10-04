@@ -1,0 +1,184 @@
+=====================================================================
+SOCIAL ENGINEERING AWARENESS SHEET - HELP DESK
+Organization: Example Org (example.com)
+Audience:     Help desk / tech support staff
+Generated:    2026-07-04
+Version:      1.0 DRAFT - review with IT ops before distribution
+=====================================================================
+
+PURPOSE
+  Help desk staff are the #1 target for social engineering because
+  they are trained to be helpful and have the power to reset
+  credentials. This sheet gives you a fixed process to follow so
+  that "being helpful" never becomes "being exploited."
+
+  Golden rule: VERIFY THE PERSON, NOT THE INFORMATION.
+  Information can be stolen. Process cannot.
+
+---------------------------------------------------------------------
+KNOWN RISK: THE MEMBERSHIP CARD
+---------------------------------------------------------------------
+
+  The membership card displays BOTH the Member ID and the
+  default PIN (password). This means:
+
+  - Anyone holding a lost or stolen card has BOTH of our primary
+    validators at once.
+  - A photo of a card (posted online, left on a desk, photographed
+    at an event) is as good as the card itself.
+  - Therefore: MEMBER ID + DEFAULT PIN ALONE IS NEVER SUFFICIENT
+    to authorize a password reset, account change, or release of
+    personal information.
+
+  Treat the card as an IDENTIFIER, not an AUTHENTICATOR.
+  It tells you WHICH account, never WHO is calling.
+
+---------------------------------------------------------------------
+CALLER VERIFICATION CHECKLIST (USE ON EVERY SENSITIVE REQUEST)
+---------------------------------------------------------------------
+
+  A "sensitive request" = password/PIN reset, email change, phone
+  number change, mailing address change, MFA reset/removal, release
+  of member personal info, or access to another person's account.
+
+  STEP 1 - IDENTIFY
+    [ ] Ask for Member ID (identifies the account only)
+    [ ] Locate the account in the member system
+    [ ] Note the phone number and email ON FILE before proceeding
+
+  STEP 2 - AUTHENTICATE (minimum TWO of the following)
+    [ ] Callback to the phone number already on file
+        (never a number the caller provides during the call)
+    [ ] Answer to a non-card data point on file, e.g.:
+          - Worksite / employer / local unit on record
+          - Date of last dues transaction or event registered
+          - Home address on file (caller states it, you confirm)
+    [ ] Verification code sent to the EMAIL ON FILE, read back live
+    [ ] In-person photo ID at either office (strongest option)
+    NOTE: The default PIN printed on the card does NOT count as
+    one of the two factors. Ever.
+
+  STEP 3 - VALIDATE THE REQUEST ITSELF
+    [ ] Does the request match normal member behavior?
+    [ ] Is the caller asking to CHANGE the contact info you would
+        use to verify them (email AND phone in one call)?
+        --> HIGH RISK. Escalate. This is the classic takeover move.
+    [ ] Is there urgency, name-dropping, or emotional pressure?
+        ("I'm at the hospital", "the president needs this now")
+        --> Slow down. Urgency is the attacker's tool, not yours.
+
+  STEP 4 - ACT AND RECORD
+    [ ] Perform the action only after Step 2 passes
+    [ ] Never set a password to the card's default PIN
+    [ ] Force a password change at next login
+    [ ] Log: date/time, request, factors used, ticket number
+    [ ] Send confirmation to the OLD email/phone on file so the
+        real member is alerted if this was fraudulent
+
+---------------------------------------------------------------------
+RED FLAGS - STOP AND ESCALATE
+---------------------------------------------------------------------
+
+  [ ] Caller offers the Member ID and default PIN immediately and
+      fluently ("proving" identity with card data alone)
+  [ ] Caller cannot receive a callback at the number on file
+  [ ] Caller wants email + phone + password changed together
+  [ ] Caller claims to be calling FOR the member (spouse, coworker,
+      manager) - no third-party actions without documented consent
+  [ ] Caller resists verification or cites authority to skip it
+  [ ] Multiple failed verification attempts on the same account
+      within days (check ticket history)
+  [ ] Request arrives by email/text asking you to "just reset it"
+
+  ESCALATION PATH
+    1. Tell the caller: "I need to complete verification before I
+       can make changes. I'll call you back at the number on file."
+    2. If verification fails: do NOT reveal what failed or why.
+       Say only: "I'm unable to verify this request by phone.
+       You can complete this in person with photo ID."
+    3. Open a ticket, flag it SECURITY, notify the IT lead or IT manager.
+    4. If you suspect an active takeover attempt: lock the account
+       pending review, do not wait.
+
+---------------------------------------------------------------------
+LOST / STOLEN CARD PROCEDURE
+---------------------------------------------------------------------
+
+  When a member reports a lost or stolen card:
+
+  [ ] Verify the reporter using Step 2 factors (NOT card data -
+      by definition they no longer hold the card, and an attacker
+      might)
+  [ ] Immediately invalidate the default PIN on the account
+  [ ] Force a new password set via the email on file
+  [ ] Add an account note: "CARD LOST <date> - default PIN void,
+      require enhanced verification for 90 days"
+  [ ] Issue replacement card per membership process
+  [ ] Remind the member: anyone who found the card has their
+      Member ID and old PIN
+
+---------------------------------------------------------------------
+TEST SCENARIO: THE FOUND-CARD IMPERSONATION DRILL
+---------------------------------------------------------------------
+
+  Purpose: verify the help desk does NOT accept card data alone.
+  Run quarterly, or after staff changes. Coordinated by IT
+  with one manager aware. Use a test/dummy member account.
+
+  SETUP
+    - Create or designate a test member account with a card, a
+      phone number the tester does NOT control (e.g., a desk phone
+      in the IT office), and an email the tester does NOT control.
+    - Tester = someone the help desk won't recognize by voice.
+
+  THE CALL (script outline)
+    1. Tester calls the help desk from an outside line.
+    2. "Hi, I need my password reset. My Member ID is <ID> and my
+       PIN is <default PIN from the card>."  (Fluent, confident.)
+    3. If asked verification questions: deflect with urgency -
+       "I'm between shifts, I really just need this reset now."
+    4. If offered a callback: "My phone number changed, use this
+       one instead: <tester's number>."
+    5. If offered an email code: "I can't get into that email,
+       that's the whole problem. Can you change it to <new email>?"
+
+  PASS CRITERIA (all must hold)
+    [ ] Staff did not reset the password on card data alone
+    [ ] Staff insisted on callback/email TO THE DATA ON FILE
+    [ ] Staff refused to redirect callback to a caller-supplied
+        number
+    [ ] Staff refused to change email + phone + password together
+    [ ] Staff remained polite but did not reveal which check
+        failed or what would have satisfied them
+    [ ] Staff logged a ticket and/or escalated
+
+  FAIL RESPONSE
+    - No blame, no naming in team channels. Debrief 1:1 same day.
+    - Walk through this sheet together; re-test within 30 days.
+    - Track pass rate over time as a team metric, not individual.
+
+  VARIANT DRILLS (rotate)
+    - "Manager authorization" variant: tester claims a named
+      manager approved skipping verification.
+    - Email variant: spoofed-looking email requests a reset for
+      the test account with a photo of the card attached.
+    - In-person variant: tester presents only the card (no photo
+      ID) at the front desk.
+
+---------------------------------------------------------------------
+QUICK PHRASES THAT KEEP YOU SAFE
+---------------------------------------------------------------------
+
+  "I'll call you back at the number we have on file."
+  "I can't skip verification for anyone - it protects your
+   account too."
+  "I'm unable to verify this by phone, but you're welcome to
+   come in with photo ID."
+  "Let me open a ticket and have this reviewed."
+
+  You will never be disciplined for verifying too carefully.
+  You can be responsible for an account takeover if you skip it.
+
+=====================================================================
+Generated by Claude | For internal/reference use only
+=====================================================================

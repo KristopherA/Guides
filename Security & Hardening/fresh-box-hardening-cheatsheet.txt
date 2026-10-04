@@ -1,0 +1,972 @@
+========================================================================
+FRESH BOX HARDENING RUNBOOK  —  Lynis + ssh-audit + Trivy
+OS coverage: Ubuntu Linux (primary), Debian; notes for Proxmox/Docker hosts
+Generated: 2026-08-15
+========================================================================
+
+Purpose: get a fresh box from a ~50s hardening score to a defensible
+baseline using three low-noise, high-fixability tools. Run in the order
+below. Loop step 5 after each round of fixes.
+
+Sequence:
+  1. Install the three tools
+  2. Baseline the host          (Lynis)
+  3. Fix + grade SSH            (ssh-audit)
+  4. Scan images + OS for CVEs  (Trivy)
+  5. Re-audit and diff          (Lynis again)
+
+
+------------------------------------------------------------------------
+STEP 1 — INSTALL
+------------------------------------------------------------------------
+
+COMMAND
+  apt install lynis
+
+DESCRIPTION
+  Install Lynis from the distro repo. For the newest controls, prefer the upstream release over the apt version, which lags.
+
+USAGE
+  sudo apt update && sudo apt install -y lynis
+
+SUCCESS
+  lynis 3.x.x  (verify: lynis show version)
+
+FAILURE
+  E: Unable to locate package lynis — enable universe repo, or clone github.com/CISOfy/lynis and run ./lynis from the clone.
+
+---
+
+COMMAND
+  pip install ssh-audit
+
+DESCRIPTION
+  Install ssh-audit. Available via apt on 24.04+, or pipx for the latest checks including post-quantum KEX flags.
+
+USAGE
+  sudo apt install -y ssh-audit    # or: pipx install ssh-audit
+
+SUCCESS
+  ssh-audit 3.x.x  (verify: ssh-audit --help)
+
+FAILURE
+  command not found — pip installs to ~/.local/bin; ensure it is on PATH, or use pipx.
+
+---
+
+COMMAND
+  trivy install
+
+DESCRIPTION
+  Install Trivy from Aqua's apt repo. Do not rely on the distro package; it is usually far behind on the vuln DB tooling.
+
+USAGE
+  sudo apt install -y wget gnupg
+  wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+  echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+  sudo apt update && sudo apt install -y trivy
+
+SUCCESS
+  Version: 0.5x.x  (verify: trivy --version)
+
+FAILURE
+  DB download errors on first run — the box needs outbound HTTPS to ghcr.io / mirror.gcr.io for the vuln DB. Air-gapped: use trivy --download-db-only elsewhere and copy the cache.
+
+
+------------------------------------------------------------------------
+STEP 2 — BASELINE THE HOST (Lynis)
+------------------------------------------------------------------------
+
+COMMAND
+  lynis audit system
+
+DESCRIPTION
+  Full host audit. Produces a 0-100 hardening index plus a ranked list of suggestions, each tied to a control ID you can look up.
+
+USAGE
+  sudo lynis audit system
+
+SUCCESS
+  Hardening index : 58 [############        ]
+  ...ends with "Suggestions (NN):" and "Warnings (N):" sections.
+
+FAILURE
+  Runs as non-root — many tests skipped, score inflated/misleading. Always run with sudo.
+
+---
+
+COMMAND
+  lynis audit system --quick
+
+DESCRIPTION
+  Non-interactive run (no "press enter" pauses). Use this in scripts or when running over SSH on many boxes.
+
+USAGE
+  sudo lynis audit system --quick
+
+SUCCESS
+  Completes without prompts; same report structure written to log.
+
+FAILURE
+  No difference seen — you may already have interactive mode off; harmless.
+
+---
+
+COMMAND
+  grep Suggestion /var/log/lynis-report.dat
+
+DESCRIPTION
+  Pull the machine-readable suggestion list from the report file. This is your remediation backlog — work it top down.
+
+USAGE
+  sudo grep -E 'suggestion|warning' /var/log/lynis-report.dat
+
+SUCCESS
+  suggestion[]=SSH-7408|Consider hardening SSH configuration|...
+  One line per finding with the control ID (e.g. SSH-7408) to search.
+
+FAILURE
+  No such file — the audit did not complete; re-run step 2. File lives at /var/log/lynis-report.dat by default.
+
+---
+
+COMMAND
+  lynis show details <TEST-ID>
+
+DESCRIPTION
+  Explain a specific finding and what the control checks, so you fix the cause not the symptom.
+
+USAGE
+  lynis show details SSH-7408
+
+SUCCESS
+  Prints the test description, rationale, and the config it inspected.
+
+FAILURE
+  Unknown test id — copy the ID exactly from the report (case-sensitive, includes the numeric suffix).
+
+
+------------------------------------------------------------------------
+STEP 3 — FIX + GRADE SSH (ssh-audit)
+------------------------------------------------------------------------
+
+COMMAND
+  ssh-audit localhost
+
+DESCRIPTION
+  Grades every cipher, key exchange, MAC, and host key your sshd offers, and flags weak or non-post-quantum algorithms to remove.
+
+USAGE
+  ssh-audit localhost        # or: ssh-audit -p 22 <host>
+
+SUCCESS
+  (gen) grade: A  — with cri/warn lines naming any algorithms to drop.
+
+FAILURE
+  Connection refused — sshd not running or on a non-default port; pass -p <port>. Firewall may also block loopback:22.
+
+---
+
+COMMAND
+  ssh-audit -l warn localhost
+
+DESCRIPTION
+  Show only warnings and worse. Cuts the passing-algorithm noise so you see just what needs changing.
+
+USAGE
+  ssh-audit -l warn localhost
+
+SUCCESS
+  Lists only (warn)/(fail) items, e.g. weak MAC hmac-sha1, or "kex ... no PQ protection".
+
+FAILURE
+  Empty output with grade A — nothing at warn level; you are clean.
+
+---
+
+COMMAND
+  ssh-audit --policy=...
+
+DESCRIPTION
+  Test sshd against a named/hardening policy for pass/fail CI gating rather than a letter grade.
+
+USAGE
+  ssh-audit -T localhost -P "Hardened Ubuntu Server 24.04 LTS (version 1)"
+
+SUCCESS
+  Pass  — exit code 0, suitable for a CI gate.
+
+FAILURE
+  Fail  — exit code non-zero, lists each policy rule missed. List built-in policies with: ssh-audit --list-policies.
+
+---
+
+REMEDIATION NOTE (SSH)
+  Apply fixes in /etc/ssh/sshd_config.d/hardening.conf (a drop-in, so
+  package updates do not clobber it). Restrict KexAlgorithms, Ciphers,
+  MACs, and HostKeyAlgorithms to the strong set ssh-audit leaves passing,
+  prefer sntrup761x25519-sha512 for PQ KEX, then:
+    sudo sshd -t && sudo systemctl reload ssh
+  sshd -t validates config BEFORE reload so a typo does not lock you out.
+
+
+------------------------------------------------------------------------
+STEP 4 — SCAN IMAGES + OS FOR CVEs (Trivy)
+------------------------------------------------------------------------
+
+COMMAND
+  trivy image <name:tag>
+
+DESCRIPTION
+  Scan a container image for known CVEs in OS packages and app dependencies. This is the primary scan on a Docker-per-service host — audit what you run, not just the host rootfs.
+
+USAGE
+  trivy image graylog/graylog:6.0
+
+SUCCESS
+  Report table grouped by severity: Total: NN (CRITICAL: n, HIGH: n ...) with fixed-in versions.
+
+FAILURE
+  FATAL image not found — pull it first (docker pull), or scan a local build by ID.
+
+---
+
+COMMAND
+  trivy image --severity HIGH,CRITICAL --exit-code 1 <img>
+
+DESCRIPTION
+  Fail the run on serious findings only. Drop this into your existing Makefile CI gate to block builds that ship HIGH/CRITICAL CVEs.
+
+USAGE
+  trivy image --severity HIGH,CRITICAL --exit-code 1 graylog/graylog:6.0
+
+SUCCESS
+  Exit code 0 — no HIGH/CRITICAL found; build proceeds.
+
+FAILURE
+  Exit code 1 — gate trips; table lists the offending packages and fixed versions.
+
+---
+
+COMMAND
+  trivy image --ignore-unfixed <img>
+
+DESCRIPTION
+  Hide CVEs with no vendor fix yet, so the report shows only what you can actually patch today. Reduces backlog noise.
+
+USAGE
+  trivy image --ignore-unfixed --severity HIGH,CRITICAL graylog/graylog:6.0
+
+SUCCESS
+  Shorter table — only vulns with a "Fixed Version" listed.
+
+FAILURE
+  Still large — the base image is stale; rebuild FROM a newer/slim tag.
+
+---
+
+COMMAND
+  trivy fs .
+
+DESCRIPTION
+  Scan a project directory (source tree, lockfiles) for vulnerable dependencies. Use on your Python repos to catch requirements.txt CVEs before build.
+
+USAGE
+  trivy fs --scanners vuln,secret .
+
+SUCCESS
+  Lists dependency CVEs plus any hardcoded secrets it detects in the tree.
+
+FAILURE
+  No supported files found — no recognized lockfile/manifest in path; point it at the repo root.
+
+---
+
+COMMAND
+  trivy rootfs /
+
+DESCRIPTION
+  Scan the running host's installed OS packages for CVEs. Complements Lynis (which checks config, not package versions).
+
+USAGE
+  sudo trivy rootfs /
+
+SUCCESS
+  OS package table with severities and fixed-in versions to apt-upgrade.
+
+FAILURE
+  Slow / high memory on large hosts — scope it: trivy rootfs --scanners vuln / and skip mounted volumes.
+
+
+------------------------------------------------------------------------
+STEP 5 — RE-AUDIT AND DIFF (Lynis again)
+------------------------------------------------------------------------
+
+COMMAND
+  lynis audit system --quick
+
+DESCRIPTION
+  Re-run after applying fixes and confirm the hardening index rose and suggestions dropped. This closes the loop; repeat until diminishing returns.
+
+USAGE
+  sudo lynis audit system --quick
+
+SUCCESS
+  Hardening index climbs (e.g. 58 -> 74); previously-listed SSH/CVE suggestions gone.
+
+FAILURE
+  Score unchanged — a fix did not take (service not reloaded, or wrong file edited); check with lynis show details <ID>.
+
+---
+
+COMMAND
+  diff <(...) <(...)
+
+DESCRIPTION
+  Compare before/after suggestion lists to prove what you actually closed. Copy the report between runs first.
+
+USAGE
+  sudo cp /var/log/lynis-report.dat /tmp/before.dat   # before fixes
+  # ...apply fixes, re-audit...
+  diff <(grep suggestion /tmp/before.dat) <(grep suggestion /var/log/lynis-report.dat)
+
+SUCCESS
+  "<" lines = findings you removed; "> " lines = anything new you introduced.
+
+FAILURE
+  No output — nothing changed between runs; fixes not applied or not detected.
+
+
+------------------------------------------------------------------------
+RUNNING THIS ON EXISTING PRODUCTION SERVERS (non-disruptive)
+------------------------------------------------------------------------
+
+PRINCIPLE
+  Two of the three tools are read-only and never touch a running service:
+  Lynis reads config and package state; Trivy reads files/images. The ONLY
+  step that can interrupt a service is SSH remediation, and even that is
+  avoidable — reload, never restart. The residual risk on prod is not
+  breakage, it is RESOURCE LOAD (CPU/IO from Trivy) and lockout (a bad
+  sshd edit). Both are controllable below.
+
+---
+
+COMMAND
+  nice -n 19 ionice -c3 lynis audit system --quick
+
+DESCRIPTION
+  Run the host baseline at lowest CPU and idle IO priority so it never competes with the live service. Lynis is read-only, so scanning itself is safe on prod; this just keeps it invisible under load.
+
+USAGE
+  sudo nice -n 19 ionice -c3 lynis audit system --quick
+
+SUCCESS
+  Same report as normal; hardening index and suggestions produced with negligible load impact.
+
+FAILURE
+  Still noticeable on a tiny VM — Lynis is brief, but you can schedule it off-peak via cron and read /var/log/lynis-report.dat later.
+
+---
+
+NOTE (Lynis on prod)
+  Lynis does not stop, reload, or reconfigure anything on its own — every
+  fix is a manual action you take afterward. Safe to run any time. It may
+  briefly spawn helper checks (package queries, etc.); the nice/ionice
+  wrapper above keeps those from mattering.
+
+---
+
+COMMAND
+  ssh-audit -l warn <prod-host>
+
+DESCRIPTION
+  Grading sshd is a normal client connection — it does not disturb existing sessions or the daemon. Run it against prod from your workstation to see gaps before touching anything.
+
+USAGE
+  ssh-audit -l warn prod01.example.com
+
+SUCCESS
+  Warn/fail algorithm list; no effect on the server or logged-in users.
+
+FAILURE
+  Connection refused / timeout — firewall or non-standard port; pass -p <port>. Auditing does NOT change the server regardless.
+
+---
+
+NOTE (the one interrupting risk — and how to avoid it)
+  Applying SSH fixes is the only production hazard. Do it safely:
+    1. Open a SECOND ssh session and keep it open the whole time.
+    2. Put changes in a drop-in: /etc/ssh/sshd_config.d/hardening.conf
+    3. Validate BEFORE applying:   sudo sshd -t
+       (aborts on syntax error so nothing is applied)
+    4. RELOAD, do not restart:     sudo systemctl reload ssh
+       reload re-reads config and does NOT drop existing connections;
+       restart kills the daemon and can drop sessions mid-command.
+    5. From a THIRD, brand-new session, confirm you can still log in.
+       If it fails, your still-open session #1 lets you revert.
+  Net effect on users: none. Active sessions persist across reload;
+  only new connections use the tightened algorithms.
+
+---
+
+COMMAND
+  trivy image --scanners vuln <name:tag>
+
+DESCRIPTION
+  Prefer scanning the IMAGE (from registry or local store) over scanning the live host. It reads image layers, not the running container's memory or disk, so it is completely decoupled from the running service.
+
+USAGE
+  nice -n 19 ionice -c3 trivy image --scanners vuln graylog/graylog:6.0
+
+SUCCESS
+  CVE table produced with no interaction with the running container.
+
+FAILURE
+  DB download stalls — pre-warm the cache off-peak with trivy image --download-db-only, then scans reuse it offline.
+
+---
+
+COMMAND
+  trivy rootfs --scanners vuln --skip-dirs /path /
+
+DESCRIPTION
+  If you must scan the live host rootfs, limit scanners to vuln (skip secret/config passes) and exclude large data volumes so IO stays low and the scan finishes fast.
+
+USAGE
+  sudo nice -n 19 ionice -c3 trivy rootfs --scanners vuln \
+    --skip-dirs /var/lib/docker,/org-backups,/mnt /
+
+SUCCESS
+  OS package CVEs listed; mounted data and backup volumes untouched, IO minimal.
+
+FAILURE
+  Slow / high memory anyway — scan images instead of rootfs, or run during a maintenance window; rootfs is the heaviest of the three tools.
+
+---
+
+NOTE (Trivy on prod)
+  Trivy is read-only — it never patches. Two load controls matter:
+  (a) nice/ionice wrap every invocation; (b) --skip-dirs on big volumes
+  (Docker overlay, /org-backups, mounted MongoDB/MySQL data) so it does
+  not walk gigabytes of live data. Cache the vuln DB once off-peak so
+  repeated scans do not re-download. Scanning a running container by name
+  is fine too, but scanning the image is lighter and reproducible in CI.
+
+---
+
+
+------------------------------------------------------------------------
+RUNNING FROM CONTAINERS (ssh-audit + Trivy only; Lynis stays on host)
+------------------------------------------------------------------------
+
+RULE OF THUMB
+  Containerize a tool when it inspects something EXTERNAL to itself (a
+  network endpoint, a mounted directory, an image). Do NOT containerize a
+  tool that introspects its OWN runtime environment.
+    ssh-audit  -> network client        -> containerizes cleanly
+    Trivy      -> reads images/files     -> containerizes cleanly
+    Lynis      -> audits its own host    -> run on the host, NOT a container
+  A containerized Lynis scores the CONTAINER image, not your host — wrong
+  answer, so it is omitted here. Keep Lynis as a host cron job (see the
+  prod section above).
+
+====================  ssh-audit (containerized)  ====================
+
+COMMAND
+  docker run --rm positronsecurity/ssh-audit <host>
+
+DESCRIPTION
+  Runs ssh-audit as a throwaway network client. No install on the host, no state kept; identical result to the host binary because it only speaks SSH to the target.
+
+USAGE
+  docker run --rm positronsecurity/ssh-audit prod01.example.com
+  docker run --rm positronsecurity/ssh-audit -l warn -p 2222 prod01.example.com
+
+SUCCESS
+  (gen) grade: A  — same output as host-installed ssh-audit.
+
+FAILURE
+  Unable to connect — container cannot reach the target; for a sshd on the SAME host's loopback, add --network host and target 127.0.0.1 (loopback is not shared by default from a bridged container).
+
+---
+
+NOTE (ssh-audit image)
+  positronsecurity/ssh-audit is the maintainer's official image. --rm
+  discards the container after each run so nothing accumulates. No volumes
+  or sockets needed — it holds no state and touches no files.
+
+====================  Trivy (containerized)  ====================
+
+COMMAND
+  docker run --rm -v trivy-cache:/root/.cache/trivy aquasec/trivy <subcommand>
+
+DESCRIPTION
+  Official Trivy image. The named volume persists the vulnerability DB between runs so you do not re-download it every time. What you mount depends on the scan mode (below).
+
+USAGE
+  # one-time: pre-warm the DB into the cache volume
+  docker run --rm -v trivy-cache:/root/.cache/trivy aquasec/trivy image --download-db-only
+
+SUCCESS
+  DB downloaded once; subsequent scans reuse the trivy-cache volume offline.
+
+FAILURE
+  Repeated slow DB pulls — you forgot the -v trivy-cache mount; without it every run starts cold.
+
+---
+
+COMMAND
+  (image scan) mount the docker socket
+
+DESCRIPTION
+  To scan images already in the host's local Docker store, give the container access to the host Docker socket. Trivy then reads them like the host CLI would.
+
+USAGE
+  docker run --rm \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v trivy-cache:/root/.cache/trivy \
+    aquasec/trivy image --scanners vuln graylog/graylog:6.0
+
+SUCCESS
+  CVE table for the local image; no service interaction.
+
+FAILURE
+  permission denied on /var/run/docker.sock — the socket group differs inside the container; run as root (default) or match the host docker gid. Note: sharing the socket grants root-equivalent host control, so use only on hosts you trust.
+
+---
+
+COMMAND
+  (filesystem/repo scan) mount the directory
+
+DESCRIPTION
+  Scan a source tree or lockfiles by mounting the directory read-only into the container and pointing Trivy at the mount path — not at the container's own paths.
+
+USAGE
+  docker run --rm \
+    -v "$PWD":/scan:ro \
+    -v trivy-cache:/root/.cache/trivy \
+    aquasec/trivy fs --scanners vuln /scan
+
+SUCCESS
+  Dependency CVEs for the mounted repo listed.
+
+FAILURE
+  No supported files found — you pointed at / instead of /scan, so Trivy scanned the empty container fs; always target the mount path.
+
+---
+
+COMMAND
+  (host rootfs scan) mount host / read-only
+
+DESCRIPTION
+  Scan the host's installed OS packages from inside the container by mounting host / read-only and pointing rootfs at the mount. Critical: without this mount, rootfs scans the CONTAINER, giving the wrong answer.
+
+USAGE
+  docker run --rm \
+    -v /:/host:ro \
+    -v trivy-cache:/root/.cache/trivy \
+    aquasec/trivy rootfs --scanners vuln \
+    --skip-dirs /host/var/lib/docker,/host/org-backups /host
+
+SUCCESS
+  Host OS package CVEs listed; big volumes skipped, IO low.
+
+FAILURE
+  Results look like a minimal base image — you targeted / (the container) not /host (the mount); the rootfs argument must be the mount path.
+
+---
+
+DOCKER COMPOSE (audit toolbox: ssh-audit + Trivy)
+  Save as audit-tools.yml. Runs are on-demand via 'run', not long-lived
+  services (these tools execute and exit). Lynis is intentionally absent.
+
+  ----------------------------------------------------------------
+  # audit-tools.yml  —  on-demand security audit containers
+  services:
+    ssh-audit:
+      image: positronsecurity/ssh-audit
+      network_mode: host          # so it can reach loopback sshd
+      entrypoint: ["ssh-audit"]
+
+    trivy:
+      image: aquasec/trivy
+      volumes:
+        - trivy-cache:/root/.cache/trivy
+        - /var/run/docker.sock:/var/run/docker.sock   # local image scans
+        - /:/host:ro                                   # host rootfs scans
+      entrypoint: ["trivy"]
+
+  volumes:
+    trivy-cache:
+  ----------------------------------------------------------------
+
+  USAGE
+    docker compose -f audit-tools.yml run --rm ssh-audit -l warn 127.0.0.1
+    docker compose -f audit-tools.yml run --rm trivy image --scanners vuln graylog/graylog:6.0
+    docker compose -f audit-tools.yml run --rm trivy rootfs --scanners vuln \
+      --skip-dirs /host/var/lib/docker,/host/org-backups /host
+
+  SUCCESS
+    Each 'run' executes one scan and removes the container (--rm); the
+    trivy-cache volume persists the DB across invocations.
+
+  FAILURE
+    ssh-audit cannot reach loopback — network_mode: host is required for
+    127.0.0.1; without it, target the host's LAN IP instead.
+
+---
+
+SECURITY NOTE (container privileges)
+  Mounting /var/run/docker.sock or / into a container is powerful: the
+  socket is effectively host root, and /:/host exposes the whole disk.
+  Mount read-only (:ro) wherever possible, use --rm so nothing lingers,
+  and only run these on hosts you administer. This is fine for your own
+  audit workflow; it is not something to expose to untrusted images.
+
+---
+
+
+------------------------------------------------------------------------
+EXTENDED AUDIT TOOLS (web TLS, misconfig, docker CIS, host telemetry)
+------------------------------------------------------------------------
+
+====================  testssl.sh — grade the web/TLS tier  ====================
+
+COMMAND
+  testssl.sh <url>
+
+DESCRIPTION
+  The HTTPS parallel to ssh-audit. Grades TLS protocols, ciphers, cert chain, and flags weak/deprecated settings. Run against each Caddy-fronted example.com subdomain.
+
+USAGE
+  git clone --depth 1 https://github.com/testssl/testssl.sh
+  ./testssl.sh/testssl.sh https://sign.example.com
+
+SUCCESS
+  Rating (experimental): A  — with per-category findings (protocols, ciphers, PFS, vulnerabilities).
+
+FAILURE
+  Fatal: Can't connect — wrong port or host down; for a non-443 service add the port: testssl.sh host:8443. Cert-name mismatch shows as a warning, not a failure.
+
+---
+
+COMMAND
+  testssl.sh --jsonfile <out> <url>
+
+DESCRIPTION
+  Emit machine-readable JSON (one object per finding) for shipping to Graylog. Use this form in the cron wrapper.
+
+USAGE
+  ./testssl.sh --jsonfile /var/log/org-audit/testssl-sign.json https://sign.example.com
+
+SUCCESS
+  JSON array written; each element has id, severity, finding fields ready to parse.
+
+FAILURE
+  Empty/partial file — scan interrupted; testssl is slow (30-90s/host), let it finish or add --fast.
+
+====================  trivy config — scan compose/Dockerfiles  ====================
+
+COMMAND
+  trivy config <dir>
+
+DESCRIPTION
+  Misconfiguration scan of Dockerfiles, compose files, and IaC — catches privileged containers, missing USER, exposed ports, and other issues CVE scanning never sees. Point it at your per-service compose tree.
+
+USAGE
+  trivy config --severity HIGH,CRITICAL /org-scripts/
+
+SUCCESS
+  Findings grouped by file with rule ID (e.g. AVD-DS-0002 "no USER directive") and severity.
+
+FAILURE
+  No misconfigurations detected — clean, or no recognized config files in the path; confirm the dir holds Dockerfile/compose/*.yml.
+
+---
+
+COMMAND
+  trivy config -f json -o <out> <dir>
+
+DESCRIPTION
+  JSON output of the misconfig scan for Graylog shipping.
+
+USAGE
+  trivy config -f json -o /var/log/org-audit/trivy-config.json /org-scripts/
+
+SUCCESS
+  Structured JSON with Misconfigurations array per target file.
+
+FAILURE
+  Empty results array — nothing flagged, or wrong path; verify with the table form first.
+
+====================  Docker Bench — CIS Docker benchmark  ====================
+
+COMMAND
+  docker/docker-bench-security
+
+DESCRIPTION
+  Dedicated CIS Docker benchmark for the daemon and every running container — the thorough pass Lynis only touches lightly. Right fit for a Docker-per-service host.
+
+USAGE
+  docker run --rm --net host --pid host --userns host --cap-add audit_control \
+    -v /var/lib:/var/lib:ro -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    -v /etc:/etc:ro -v /usr/bin/containerd:/usr/bin/containerd:ro \
+    docker/docker-bench-security
+
+SUCCESS
+  [PASS]/[WARN]/[INFO] checklist across host config, daemon, images, and runtime, with a score.
+
+FAILURE
+  Cannot connect to Docker daemon — socket not mounted or wrong path; the read-only mounts above are all required for a complete run.
+
+====================  auditd — host telemetry (complements Snort)  ====================
+
+COMMAND
+  auditctl -w <path> -p <perms> -k <key>
+
+DESCRIPTION
+  Snort watches the wire; auditd watches the host — execve, file writes, privilege use. Adds host-side detections your IDS feed cannot see. Put persistent rules in /etc/audit/rules.d/.
+
+USAGE
+  sudo apt install -y auditd
+  echo '-w /etc/ssh/sshd_config -p wa -k ssh_config_change' | sudo tee /etc/audit/rules.d/org.rules
+  sudo augenrules --load
+
+SUCCESS
+  auditctl -l lists the rule; any write to the watched path now logs to /var/log/audit/audit.log with key=ssh_config_change.
+
+FAILURE
+  augenrules: command not found or rule ignored — auditd not installed, or syntax error; validate one rule live with auditctl -w ... before persisting.
+
+---
+
+COMMAND
+  ausearch -k <key>
+
+DESCRIPTION
+  Query the audit log by rule key. Use to confirm events fire before you wire the feed to Graylog.
+
+USAGE
+  sudo ausearch -k ssh_config_change -i
+
+SUCCESS
+  Decoded events (-i) showing who, what, when for each match.
+
+FAILURE
+  <no matches> — rule not triggered yet, or auditd not running (systemctl status auditd).
+
+
+------------------------------------------------------------------------
+SHIPPING AUDIT OUTPUT TO GRAYLOG (via Graylog Sidecar)
+------------------------------------------------------------------------
+
+DESIGN
+  Same shape as your Snort 3 -> Graylog pipeline, but for audit data:
+    tools write JSON to /var/log/org-audit/  (+ auditd's /var/log/audit/)
+      -> Graylog Sidecar-managed Filebeat tails those files
+        -> Beats input on Graylog
+          -> pipeline rule parse_json, prefix fields audit_, route to stream
+  Sidecar (not raw GELF) so collector configs live centrally in Graylog
+  and every host with the "audit" tag gets the same Filebeat config.
+
+---
+
+STEP A — normalize all tool output into one directory
+
+COMMAND
+  (cron wrapper) write JSON to /var/log/org-audit/
+
+DESCRIPTION
+  A single scheduled script runs the scanners and drops JSON into one watched dir. Lynis has no native JSON, so convert its report.dat inline.
+
+USAGE
+  sudo mkdir -p /var/log/org-audit
+  # /org-scripts/audit-collect.sh (run from cron, e.g. daily off-peak):
+  D=/var/log/org-audit
+  trivy image -f json -o $D/trivy-graylog.json --scanners vuln graylog/graylog:6.0
+  trivy config -f json -o $D/trivy-config.json /org-scripts/
+  ./testssl.sh/testssl.sh --jsonfile $D/testssl-sign.json https://sign.example.com
+  lynis audit system --quick
+  # convert lynis suggestions -> JSON lines:
+  grep '^suggestion\[\]=' /var/log/lynis-report.dat \
+    | sed 's/^suggestion\[\]=//' \
+    | jq -Rc 'split("|") | {tool:"lynis",control:.[0],text:.[1]}' > $D/lynis.json
+  # capture the hardening index as a trend metric:
+  grep '^hardening_index=' /var/log/lynis-report.dat \
+    | sed 's/^hardening_index=//' \
+    | jq -Rc '{tool:"lynis",metric:"hardening_index",value:(.|tonumber)}' >> $D/lynis.json
+
+SUCCESS
+  /var/log/org-audit/ holds one JSON file per tool, refreshed each run.
+
+FAILURE
+  jq: command not found — sudo apt install -y jq. Empty lynis.json — audit did not complete; check /var/log/lynis-report.dat exists.
+
+---
+
+STEP B — create the Beats input on Graylog (one-time, web UI)
+
+COMMAND
+  System > Inputs > Beats
+
+DESCRIPTION
+  Sidecar's Filebeat ships via the Beats protocol, so Graylog needs a Beats input listening (default port 5044). Launch it global or on the receiving node.
+
+USAGE
+  System / Inputs -> select "Beats" -> Launch new input
+    Bind address 0.0.0.0, Port 5044, No. of worker threads default.
+
+SUCCESS
+  Input shows RUNNING with a green state and a listening port.
+
+FAILURE
+  Address already in use — 5044 taken; pick another port and match it in the Filebeat output below. Firewall must allow the host->Graylog:5044 path.
+
+---
+
+STEP C — install and register the Sidecar on each host
+
+COMMAND
+  graylog-sidecar -service install
+
+DESCRIPTION
+  Install the Sidecar agent, point it at Graylog with an API token, and tag it "audit" so it pulls the right collector config. One token, reused across hosts.
+
+USAGE
+  # get the .deb from the graylog-sidecar releases, then:
+  sudo dpkg -i graylog-sidecar_*.deb
+  sudo nano /etc/graylog/sidecar/sidecar.yml
+    server_url: "http://graylog01.example.com:9000/api/"
+    server_api_token: "<create in System > Sidecars > 'Create API token'>"
+    tags: ["audit"]
+  sudo graylog-sidecar -service install
+  sudo systemctl enable --now graylog-sidecar
+
+SUCCESS
+  System > Sidecars in Graylog lists the host as Active with tag "audit".
+
+FAILURE
+  Sidecar shows inactive — bad server_url or token; check journalctl -u graylog-sidecar. Token needs the Sidecar/collector permission.
+
+---
+
+STEP D — define the Filebeat collector config (web UI, assigned to tag "audit")
+
+COMMAND
+  System > Sidecars > Configuration
+
+DESCRIPTION
+  Create a Filebeat configuration that tails the audit dir (and auditd log) and outputs to your Beats input. Assign it to the "audit" tag so every tagged host inherits it. Paste the template below into the config editor.
+
+USAGE
+  ----------------------------------------------------------------
+  # Graylog Sidecar -> Filebeat collector configuration
+  fields_under_root: true
+  fields.gl2_source_collector: ${sidecar.nodeId}
+  fields.source_type: audit
+
+  filebeat.inputs:
+    - type: log
+      enabled: true
+      paths:
+        - /var/log/org-audit/*.json
+      json.keys_under_root: true
+      json.add_error_key: true
+    - type: log
+      enabled: true
+      paths:
+        - /var/log/audit/audit.log
+      fields.source_type: auditd
+
+  output.logstash:
+    hosts: ["graylog01.example.com:5044"]
+
+  path:
+    data: ${sidecar.spoolDir!"/var/lib/graylog-sidecar/collectors/filebeat"}/data
+    logs: ${sidecar.spoolDir!"/var/lib/graylog-sidecar/collectors/filebeat"}/log
+  ----------------------------------------------------------------
+
+SUCCESS
+  Sidecar pushes the config to tagged hosts; Filebeat starts and messages arrive on the Beats input (watch its throughput counter climb).
+
+FAILURE
+  No messages — path glob wrong, or Filebeat cannot read the files; the graylog-sidecar user needs read on /var/log/org-audit and /var/log/audit (add it to the adm group or set ACLs).
+
+---
+
+STEP E — parse and route in a pipeline (matches your snort_ pattern)
+
+COMMAND
+  (pipeline rule) parse_json + route_to_stream
+
+DESCRIPTION
+  Same approach as your Snort parse_json rules: pull the JSON into fields, prefix them audit_, and route to a dedicated stream so audit data does not pollute the default index.
+
+USAGE
+  rule "parse org audit json"
+  when
+    has_field("source_type") && to_string($message.source_type) == "audit"
+  then
+    let j = parse_json(to_string($message.message));
+    let m = to_map(j);
+    set_fields(fields: m, prefix: "audit_");
+    route_to_stream(name: "ORG Audit", remove_from_default: true);
+  end
+
+SUCCESS
+  Messages in the "ORG Audit" stream with audit_severity, audit_tool, etc.; ready for Sigma rules.
+
+FAILURE
+  parse_json failed — the line was not valid JSON (e.g. testssl's outer array vs per-line objects); split arrays with a prior rule or use jq -c to emit one object per line in Step A.
+
+---
+
+DETECTION IDEAS (why this feeds your blue-team work)
+  With audit data in Graylog you can write Sigma rules such as:
+    - new CRITICAL CVE (audit_severity=CRITICAL) on a crown-jewel host
+    - hardening_index drops between runs (drift alarm)
+    - trivy config flags a container gaining privileged/host mounts
+    - auditd write to /etc/ssh/sshd_config outside a change window
+  Vuln management and hardening become detections, not spreadsheets.
+
+---
+
+
+------------------------------------------------------------------------
+QUICK RECAP (paste into next box)
+------------------------------------------------------------------------
+
+  sudo lynis audit system --quick                      # 1. baseline
+  ssh-audit -l warn localhost                           # 2. see SSH gaps
+  # edit /etc/ssh/sshd_config.d/hardening.conf, then:
+  sudo sshd -t && sudo systemctl reload ssh
+  ssh-audit localhost                                   # 3. confirm grade A
+  trivy image --severity HIGH,CRITICAL <each service>   # 4. image CVEs
+  sudo trivy rootfs /                                    #    host CVEs
+  sudo lynis audit system --quick                       # 5. re-score + diff
+
+EXTENDED (add as coverage grows):
+  testssl.sh https://<subdomain>                         # web/TLS grade
+  trivy config /org-scripts/                             # compose/Dockerfile misconfig
+  docker run ... docker/docker-bench-security            # CIS Docker
+  auditctl -w <path> -p wa -k <key>                      # host telemetry
+
+SHIP TO GRAYLOG (Sidecar):
+  # cron -> JSON into /var/log/org-audit/
+  # Beats input (5044) -> Sidecar Filebeat (tag "audit") -> parse_json pipeline
+  # route to "ORG Audit" stream, prefix fields audit_ -> write Sigma rules
+
+Order matters: baseline first so you have a number, fix config (free,
+reversible) before chasing CVEs (needs rebuilds), re-audit to prove it.
+
+PROD-SAFE VARIANT (existing servers, no interruption):
+  sudo nice -n 19 ionice -c3 lynis audit system --quick   # read-only
+  ssh-audit -l warn <host>                                  # client only
+  # keep session #1 open; edit drop-in; sshd -t; reload (not restart);
+  # verify from a fresh session #3 before closing #1
+  nice -n 19 ionice -c3 trivy image --scanners vuln <img>  # scan images
+  # only ssh remediation touches a service — reload keeps sessions alive
+
+========================================================================
+Generated by Claude | For internal/reference use only
+========================================================================

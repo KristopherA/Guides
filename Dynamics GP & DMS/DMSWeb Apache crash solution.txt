@@ -1,0 +1,81 @@
+sysadmin
+  08:49
+OK, so the problem is apached crashes
+08:49
+and you restart apache
+
+
+consultant
+  08:50
+Remember the thing a while back where every two weeks or so Apache would go down and couldn't get restarted properly because it was complaining that the key for the cert didn't match?
+08:52
+Well I had figured out the fix for it – replace the cert and key created by FMS with our own so that Apache would stop bitching – and implemented it. But reinstalling or upgrading FMS will cause those two files to get recreated, and we did an FMS upgrade a couple weeks back.
+So right on cue, Apache went boom and couldn't restart because of said cert/key mismatch.
+08:53
+To be clear: my fix doesn't stop Apache from crashing, it just allows it to cleanly auto-relaunch itself.
+08:54
+And this is specifically the server.key and server.pem files in /Library/FileMaker Server/HTTPServer/conf/, not the ones FMS uses for actual FileMaker-y stuff.
+
+
+sysadmin
+  08:56
+OK, so do they need to be copied in every time then? Or just after an update
+New
+
+
+consultant
+  08:57
+Just after an update of FMS itself. I think the one time I'd read-only'd the permissions on the files so FMS couldn't jigger with them any more, but ... perhaps not. (edited) 
+
+
+sysadmin
+  08:58
+OK, so where are those certs kept? Or rather which ones are they?
+
+
+consultant
+  08:58
+So what I do is just move the two files to server.fm_created.* just so we still have a copy of what FMS puts there (in case we need to reference/use them for something or other), and copied the erpdb.example.com.* files into the server.key and server.pem locations.
+Untitled 
+fmadmin@erpdb conf % ls
+erpdb.example.com.pem        httpd.conf.2.4          server.fm_created.key
+erpdb.example.com_intermediate.pem   magic               server.fm_created.pem
+erpdb.example.com_key.pem        magic.2.4           server.key
+extra               mime.types          server.pem
+httpd.conf          mime.types.2.4
+Collapse
+
+
+
+08:58
+
+
+consultant
+And this is specifically the server.key and server.pem files in /Library/FileMaker Server/HTTPServer/conf/, not the ones FMS uses for actual FileMaker-y stuff.
+Direct Message | Today at 08:54 | View conversation
+
+
+sysadmin
+  09:00
+k that seems straightforward
+
+
+consultant
+  09:00
+% mv server.key server.fm_created.key
+% mv server.pem server.fm_created.pem
+% cp erpdb.example.com_key.pem server.key
+% cp erpdb.example.com.pem server.pem
+Literally just that is all I did. (edited) 
+
+
+sysadmin
+  09:00
+To be clear, until the next update we don't need to do this again, right?
+
+
+consultant
+  09:00
+Correct.
+
+And then just httpdctl start inside /Library/FileMaker Server/HTTPServer/bin/ to start Apache back up.

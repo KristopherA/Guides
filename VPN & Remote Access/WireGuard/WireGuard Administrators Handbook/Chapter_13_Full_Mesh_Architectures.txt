@@ -1,0 +1,143 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 13 FULL MESH
+ARCHITECTURES
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+A full mesh connects every site directly to every other site. This
+minimizes latency between peers but increases configuration complexity
+as the number of sites grows.
+
+===============================================================================
+2. WHEN TO USE FULL MESH
+===============================================================================
+
+Recommended for: - Small enterprises - Labs - Development environments -
+Up to roughly 10-20 sites depending on automation
+
+Avoid for large deployments without centralized configuration
+management.
+
+===============================================================================
+3. TOPOLOGY
+===============================================================================
+
+      Site A -------- Site B
+        |  \        /  |
+        |    \    /    |
+        |      \ /     |
+        |      / \     |
+        |    /     \   |
+      Site C -------- Site D
+
+Each site has a direct tunnel to every other site.
+
+===============================================================================
+4. ADVANTAGES
+===============================================================================
+
+-   Lowest latency
+-   No central bottleneck
+-   Direct site communication
+-   Fast failover between peers
+-   No transit hub required
+
+===============================================================================
+5. DISADVANTAGES
+===============================================================================
+
+-   Number of tunnels grows rapidly
+-   More peer definitions
+-   Harder key management
+-   More routing complexity
+-   Configuration drift risk
+
+Connections required:
+
+Sites Tunnels 2 1 5 10 10 45 20 190
+
+===============================================================================
+6. CONFIGURATION STRATEGY
+===============================================================================
+
+Each site contains one [Peer] section for every other site.
+
+Example
+
+Site A Peer B Peer C Peer D
+
+Site B Peer A Peer C Peer D
+
+Use automation to generate configurations.
+
+===============================================================================
+7. ROUTING
+===============================================================================
+
+Advertise only local networks.
+
+Example
+
+Site A 10.60.10.0/24
+
+Site B 10.60.20.0/24
+
+AllowedIPs should contain only reachable prefixes for that peer.
+
+===============================================================================
+8. AUTOMATION
+===============================================================================
+
+Recommended tools
+
+-   Ansible
+-   Git
+-   CI/CD pipelines
+-   Configuration templates
+
+Never edit dozens of peer configurations manually.
+
+===============================================================================
+9. MONITORING
+===============================================================================
+
+Useful commands
+
+wg show wg show latest-handshakes wg show transfer ip route journalctl
+-u wg-quick@wg0
+
+Track: - Handshake age - Transfer counters - Route changes -
+Configuration revisions
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Only one site unreachable - Peer configuration - Firewall - AllowedIPs
+
+Several sites unreachable - Shared routing problem - DNS - Key rotation
+issue
+
+Intermittent failures - MTU - NAT timeout - Internet instability
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Automate configuration generation.
+-   Keep addressing unique.
+-   Document every tunnel.
+-   Rotate keys consistently.
+-   Use version control.
+-   Test changes in staging first.
+
+===============================================================================
+12. CHECKLIST
+===============================================================================
+
+[ ] All peers configured [ ] Unique addressing verified [ ] Routes
+validated [ ] Monitoring enabled [ ] Backups completed [ ] Configuration
+committed to version control
+
+END OF CHAPTER 13

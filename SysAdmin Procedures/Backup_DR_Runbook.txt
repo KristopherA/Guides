@@ -1,0 +1,414 @@
+================================================================================
+  BACKUP & DISASTER RECOVERY RUNBOOK
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+
+================================================================================
+SECTION 1: BACKUP OVERVIEW
+================================================================================
+
+RTO/RPO TARGETS
+  ┌─────────────────────────────┬──────────┬──────────┬─────────────────────┐
+  │ System                      │ RPO      │ RTO      │ Backup Method       │
+  ├─────────────────────────────┼──────────┼──────────┼─────────────────────┤
+  │ Active Directory (DC)       │ 24 hours │ 4 hours  │ AD System State     │
+  │ Ubuntu — Web/App servers    │ 24 hours │ 4 hours  │ rsync + snapshots   │
+  │ Ubuntu — Database servers   │ 1 hour   │ 2 hours  │ DB dump + rsync     │
+  │ Ubuntu — File servers       │ 24 hours │ 8 hours  │ rsync               │
+  │ macOS Workstations          │ 24 hours │ 4 hours  │ Time Machine / MDM  │
+  │ Configs / Infra-as-code     │ real-time│ 1 hour   │ Git repository      │
+  └─────────────────────────────┴──────────┴──────────┴─────────────────────┘
+
+  RPO = Recovery Point Objective: maximum acceptable data loss (time)
+  RTO = Recovery Time Objective: maximum acceptable downtime
+
+BACKUP STORAGE LOCATIONS
+  Primary:    /backups/ on backup server (10.0.1.50)
+  Secondary:  Off-site / cloud (S3/Backblaze/Azure Blob) — update with actual location
+  Retention:  Daily: 14 days | Weekly: 8 weeks | Monthly: 12 months
+
+BACKUP SCHEDULE (cron on backup server — /etc/cron.d/backups)
+  0 1 * * * root /usr/local/bin/backup-ad.sh >> /var/log/backup-ad.log 2>&1
+  0 2 * * * root /usr/local/bin/backup-linux.sh >> /var/log/backup-linux.log 2>&1
+  0 3 * * * root /usr/local/bin/backup-databases.sh >> /var/log/backup-db.log 2>&1
+  0 4 * * 0 root /usr/local/bin/offsite-sync.sh >> /var/log/backup-offsite.log 2>&1
+
+
+================================================================================
+SECTION 2: BACKUP PROCEDURES
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1 ACTIVE DIRECTORY BACKUP
+--------------------------------------------------------------------------------
+
+BACKUP AD SYSTEM STATE (run on each Domain Controller)
+  # Windows Server Backup must be installed:
+  Install-WindowsFeature Windows-Server-Backup
+
+  # Perform system state backup to network share:
+  wbadmin start systemstatebackup -backuptarget:\\10.0.1.50\ad-backups -quiet
+
+  # Schedule via Task Scheduler or run via script:
+  # /usr/local/bin/backup-ad.sh (called from cron on DC via WinRM or Task Scheduler)
+
+LIST AVAILABLE BACKUPS
+  wbadmin get versions -backuptarget:\\10.0.1.50\ad-backups
+
+VERIFY BACKUP COMPLETED SUCCESSFULLY
+  wbadmin get status
+  # Or check event log:
+  Get-EventLog -LogName "Microsoft-Windows-Backup" -Newest 10 | Select-Object TimeGenerated,Message
+
+EXPORT AD TO LDIF (lightweight portable backup for reference)
+  ldifde -f C:\Backups\ad-export-$(Get-Date -Format 'yyyy-MM-dd').ldf -r "(objectClass=user)" -p Subtree
+  # Note: LDIF export does NOT include passwords; use System State for full recovery
+
+--------------------------------------------------------------------------------
+2.2 UBUNTU SERVER BACKUP (rsync)
+--------------------------------------------------------------------------------
+
+BACKUP SCRIPT TEMPLATE (/usr/local/bin/backup-linux.sh):
+  #!/usr/bin/env bash
+  set -euo pipefail
+  BACKUP_SERVER="backup@10.0.1.50"
+  BACKUP_ROOT="/backups/linux"
+  DATE=$(date +%Y-%m-%d)
+  LOG="/var/log/backup-linux.log"
+
+  log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
+
+  for HOST in web01 app01 fileserver; do
+    log "Starting backup: $HOST"
+    rsync -avz --delete --exclude=/proc --exclude=/sys --exclude=/dev \
+      --exclude=/run --exclude=/tmp --exclude=/var/cache \
+      --link-dest="$BACKUP_ROOT/$HOST/latest" \
+      root@$HOST:/ \
+      "$BACKUP_ROOT/$HOST/$DATE/" \
+      >> "$LOG" 2>&1 && \
+    ln -sfn "$BACKUP_ROOT/$HOST/$DATE" "$BACKUP_ROOT/$HOST/latest" && \
+    log "Completed: $HOST" || \
+    log "FAILED: $HOST"
+  done
+
+  # Prune backups older than 14 days
+  find "$BACKUP_ROOT" -maxdepth 2 -type d -name "????-??-??" -mtime +14 -exec rm -rf {} \; 2>/dev/null
+  log "Pruning complete"
+
+KEY RSYNC OPTIONS EXPLAINED:
+  -a              archive mode (preserves permissions, timestamps, symlinks)
+  -v              verbose
+  -z              compress during transfer
+  --delete        remove files from backup that no longer exist on source
+  --link-dest     hard-link unchanged files from previous backup (space efficient)
+  --exclude       skip directories (proc, sys, dev are virtual/not needed)
+
+MANUAL BACKUP OF A SPECIFIC DIRECTORY
+  rsync -avz --delete /var/www/ backup@10.0.1.50:/backups/linux/web01/www-$(date +%Y-%m-%d)/
+
+BACKUP NGINX/APACHE CONFIG ONLY
+  rsync -avz /etc/nginx/ backup@10.0.1.50:/backups/configs/nginx-$(date +%Y-%m-%d)/
+
+--------------------------------------------------------------------------------
+2.3 DATABASE BACKUP
+--------------------------------------------------------------------------------
+
+POSTGRESQL BACKUP
+  # Full database dump (SQL format):
+  sudo -u postgres pg_dumpall -f /backups/pg-$(date +%Y-%m-%d).sql
+  # Compress:
+  sudo -u postgres pg_dumpall | gzip > /backups/pg-$(date +%Y-%m-%d).sql.gz
+
+  # Single database dump:
+  sudo -u postgres pg_dump dbname -Fc -f /backups/dbname-$(date +%Y-%m-%d).dump
+  # -Fc = custom format (compressed, supports parallel restore)
+
+  # Verify dump is readable:
+  pg_restore --list /backups/dbname-$(date +%Y-%m-%d).dump | head -10
+
+MYSQL/MARIADB BACKUP
+  # Full dump with credentials file (more secure than CLI password):
+  mysqldump --defaults-file=/etc/mysql/backup.cnf --all-databases --single-transaction \
+    --routines --events --triggers | gzip > /backups/mysql-$(date +%Y-%m-%d).sql.gz
+
+  # /etc/mysql/backup.cnf:
+  # [mysqldump]
+  # user=backupuser
+  # password=backuppassword
+
+  # Verify:
+  zcat /backups/mysql-$(date +%Y-%m-%d).sql.gz | head -30
+
+--------------------------------------------------------------------------------
+2.4 macOS WORKSTATION BACKUP
+--------------------------------------------------------------------------------
+
+CONFIGURE TIME MACHINE TO NETWORK SHARE (per machine)
+  sudo tmutil setdestination -a smb://backup@10.0.1.50/TimeMachine
+  sudo tmutil enable
+  tmutil startbackup   # trigger immediate backup
+
+CHECK TIME MACHINE STATUS
+  tmutil status
+  tmutil latestbackup
+
+LIST ALL TIME MACHINE BACKUPS
+  tmutil listbackups
+
+FORCE BACKUP VIA SSH (remote trigger)
+  ssh admin@macbook-01.example.com "sudo tmutil startbackup --auto"
+
+VERIFY BACKUP COMPLETED (check last backup time)
+  ssh admin@macbook-01.example.com "tmutil latestbackup"
+
+
+================================================================================
+SECTION 3: BACKUP VERIFICATION (CRITICAL — RUN WEEKLY)
+================================================================================
+
+Backups that are never tested are not backups — they are hopes.
+Run these checks every Friday, or automate and review the output.
+
+--------------------------------------------------------------------------------
+3.1 VERIFY BACKUP FILES EXIST AND ARE RECENT
+--------------------------------------------------------------------------------
+
+  # Check backup server — all hosts should have today's or yesterday's backup:
+  find /backups/linux -maxdepth 2 -name "$(date +%Y-%m-%d)" -type d
+  find /backups/databases -name "*.sql.gz" -newer /backups/.last-verified
+
+  # Check backup file is not empty:
+  ls -lsh /backups/linux/web01/latest/ | head -5
+  du -sh /backups/linux/web01/$(date +%Y-%m-%d)/
+
+  # Automated check script:
+  for HOST in web01 app01 fileserver; do
+    LATEST=$(ls -t /backups/linux/$HOST/ | head -1)
+    AGE=$(( ( $(date +%s) - $(date -d "$LATEST" +%s) ) / 86400 ))
+    if [[ $AGE -gt 2 ]]; then
+      echo "WARNING: $HOST backup is $AGE days old (last: $LATEST)"
+    else
+      echo "OK: $HOST backup age: ${AGE}d (last: $LATEST)"
+    fi
+  done
+
+--------------------------------------------------------------------------------
+3.2 VERIFY BACKUP INTEGRITY
+--------------------------------------------------------------------------------
+
+VERIFY RSYNC BACKUP (file count comparison)
+  # Count files on source vs backup:
+  ssh web01 "find /var/www -type f | wc -l"
+  find /backups/linux/web01/latest/var/www -type f | wc -l
+  # Numbers should be equal or very close
+
+VERIFY DATABASE DUMP READABILITY
+  # PostgreSQL:
+  pg_restore --list /backups/databases/dbname-$(date +%Y-%m-%d).dump > /dev/null && echo "DB dump OK"
+
+  # MySQL:
+  zcat /backups/databases/mysql-$(date +%Y-%m-%d).sql.gz | mysql --execute="" 2>/dev/null && echo "MySQL dump OK"
+
+VERIFY CHECKSUM OF BACKUP FILE
+  sha256sum /backups/databases/pg-$(date +%Y-%m-%d).sql.gz | tee /backups/databases/pg-$(date +%Y-%m-%d).sha256
+  # On restore: verify the checksum matches before trusting the file
+
+--------------------------------------------------------------------------------
+3.3 TEST RESTORE (monthly — schedule this)
+--------------------------------------------------------------------------------
+
+RESTORE A SINGLE FILE FROM BACKUP (spot check)
+  # Copy a specific file from backup to a temp location:
+  cp /backups/linux/web01/latest/etc/nginx/nginx.conf /tmp/nginx.conf.restore-test
+  diff /tmp/nginx.conf.restore-test <(ssh web01 cat /etc/nginx/nginx.conf) && echo "Restore test PASSED"
+
+RESTORE A POSTGRESQL DATABASE TO TEST INSTANCE
+  sudo -u postgres createdb restore_test
+  sudo -u postgres pg_restore -d restore_test /backups/databases/dbname-$(date +%Y-%m-%d).dump
+  sudo -u postgres psql restore_test -c "SELECT COUNT(*) FROM <important_table>;"
+  sudo -u postgres dropdb restore_test   # clean up
+
+LOG YOUR TEST RESTORE RESULTS:
+  Date: _____________  System: _____________  File/DB tested: _____________
+  Result: [ ] Pass  [ ] Fail  Notes: _______________________________________
+
+
+================================================================================
+SECTION 4: DISASTER RECOVERY PROCEDURES
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1 UBUNTU SERVER FULL RESTORE
+--------------------------------------------------------------------------------
+
+SCENARIO: Server is destroyed/unrecoverable. Replace with new server.
+
+PRE-REQUISITES:
+  - New server provisioned with same OS version (Ubuntu 24.04 LTS)
+  - Same hostname and IP address assigned
+  - SSH access to backup server available
+  - Backup from /backups/linux/<hostname>/latest/ is verified
+
+PROCEDURE:
+
+  Step 1 — Install base OS and configure networking
+    # Follow standard Ubuntu 24.04 installation
+    # Set hostname, IP, DNS, join AD domain if required
+
+  Step 2 — Install rsync on new server
+    sudo apt update && sudo apt install -y rsync
+
+  Step 3 — Restore files from backup
+    sudo rsync -avz --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/run \
+      backup@10.0.1.50:/backups/linux/<hostname>/latest/ /
+    # Note: this overwrites system files — only run on a fresh install
+
+  Step 4 — Reinstall packages (package list was backed up in /var/cache/apt)
+    sudo dpkg --get-selections > /tmp/packages.txt   # use backup copy if needed
+    sudo apt install $(awk '{print $1}' /tmp/packages.txt) -y
+
+  Step 5 — Restore services
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now nginx   # repeat for all required services
+
+  Step 6 — Verify
+    systemctl --failed
+    # Test each service endpoint
+
+ESTIMATED TIME: 2-4 hours depending on data volume
+
+--------------------------------------------------------------------------------
+4.2 POSTGRESQL DATABASE RESTORE
+--------------------------------------------------------------------------------
+
+RESTORE FULL DATABASE FROM DUMP
+  # Stop application to prevent writes during restore
+  sudo systemctl stop myapp
+
+  # Drop and recreate database
+  sudo -u postgres psql -c "DROP DATABASE IF EXISTS mydb;"
+  sudo -u postgres psql -c "CREATE DATABASE mydb OWNER appuser;"
+
+  # Restore from backup (custom format)
+  sudo -u postgres pg_restore -d mydb -j 4 /backups/databases/mydb-$(date +%Y-%m-%d).dump
+  # -j 4: use 4 parallel workers for faster restore
+
+  # Verify row counts
+  sudo -u postgres psql mydb -c "SELECT schemaname,tablename,n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 10;"
+
+  # Restart application
+  sudo systemctl start myapp
+
+ESTIMATED TIME: 15 minutes to several hours depending on DB size
+
+--------------------------------------------------------------------------------
+4.3 ACTIVE DIRECTORY RESTORE
+--------------------------------------------------------------------------------
+
+SCENARIO: Domain Controller is unrecoverable.
+
+OPTION A — RESTORE SYSTEM STATE TO NEW DC
+
+  Step 1 — Build new Windows Server VM with same name/IP as failed DC
+  Step 2 — Boot into Directory Services Restore Mode (DSRM)
+            → Restart → F8 → "Directory Services Restore Mode"
+  Step 3 — Restore system state from backup:
+            wbadmin start systemstaterecovery -version:<version-id> `
+              -backuptarget:\\10.0.1.50\ad-backups -quiet
+            # Get version ID: wbadmin get versions -backuptarget:\\10.0.1.50\ad-backups
+  Step 4 — Reboot normally; AD should be operational
+
+OPTION B — SEIZE FSMO ROLES (if primary DC is permanently gone)
+
+  # From a surviving DC:
+  # Transfer roles gracefully (if original DC is still partially functional):
+  Move-ADDirectoryServerOperationMasterRole -Identity DC02 -OperationMasterRole SchemaMaster,DomainNamingMaster,PDCEmulator,RIDMaster,InfrastructureMaster
+
+  # Seize roles forcefully (if original DC is gone):
+  Move-ADDirectoryServerOperationMasterRole -Identity DC02 -OperationMasterRole SchemaMaster,DomainNamingMaster,PDCEmulator,RIDMaster,InfrastructureMaster -Force
+
+  # Verify FSMO roles on new holder:
+  netdom query fsmo
+
+  # Remove metadata for dead DC:
+  ntdsutil "metadata cleanup" "remove selected server <dead-dc-name>" quit quit
+
+ESTIMATED TIME: 2-6 hours
+
+--------------------------------------------------------------------------------
+4.4 macOS WORKSTATION RESTORE
+--------------------------------------------------------------------------------
+
+FROM TIME MACHINE BACKUP:
+  Step 1 — Boot from macOS Recovery (Cmd+R at startup)
+  Step 2 — Select "Restore from Time Machine Backup"
+  Step 3 — Select backup drive and most recent snapshot
+  Step 4 — Wait for restore to complete (30 min to several hours)
+  Step 5 — Verify user data, applications, and AD bind intact
+
+FROM MDM FULL REINSTALL:
+  Step 1 — Erase Mac via MDM remote wipe command
+  Step 2 — macOS reinstalls via DEP/ADE automatically
+  Step 3 — MDM profiles, software policies push automatically
+  Step 4 — User logs in with AD credentials and restores data from backup
+
+ESTIMATED TIME: 1-4 hours
+
+
+================================================================================
+SECTION 5: OFF-SITE / CLOUD BACKUP SYNC
+================================================================================
+
+SYNC TO AWS S3 (example)
+  aws s3 sync /backups/databases/ s3://org-backups/databases/ \
+    --delete \
+    --storage-class STANDARD_IA \
+    --sse AES256
+
+SYNC TO BACKBLAZE B2
+  b2 sync /backups/databases/ b2://org-backups/databases/ --delete
+
+VERIFY OFFSITE BACKUP (check file count and last modified)
+  aws s3 ls s3://org-backups/databases/ | sort | tail -5
+
+ENCRYPT BEFORE OFFSITE UPLOAD (GPG)
+  gpg --batch --yes --recipient backup@example.com \
+    --encrypt /backups/databases/pg-$(date +%Y-%m-%d).sql.gz
+  # Upload the .gpg file; delete the unencrypted original after upload:
+  rm /backups/databases/pg-$(date +%Y-%m-%d).sql.gz
+
+
+================================================================================
+SECTION 6: BACKUP MONITORING CHECKLIST
+================================================================================
+
+Run every Monday morning as part of weekly review:
+
+  [ ] All Linux server backups completed (check /var/log/backup-linux.log)
+        grep "FAILED\|Completed" /var/log/backup-linux.log | tail -20
+
+  [ ] All database backups completed (check /var/log/backup-db.log)
+        grep "FAILED\|Completed" /var/log/backup-db.log | tail -10
+
+  [ ] AD System State backup completed (check DC event log)
+        Get-EventLog -LogName "Microsoft-Windows-Backup" -EntryType Error -Newest 5
+
+  [ ] Off-site sync completed (check /var/log/backup-offsite.log)
+        tail -10 /var/log/backup-offsite.log
+
+  [ ] Backup storage space sufficient
+        df -h /backups/   # should be under 80% used
+
+  [ ] Time Machine backups current on all Macs (sample check)
+        ssh admin@macbook-01 "tmutil latestbackup"
+
+  [ ] Monthly restore test scheduled/completed:
+        Last restore test date: _____________  System tested: _____________
+        Next scheduled test: _____________
+
+================================================================================
+END OF DOCUMENT
+================================================================================

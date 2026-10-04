@@ -1,0 +1,243 @@
+UBIQUITI ROUTER AND SWITCH ADMINISTRATION CHEAT SHEET
+====================================================
+
+Includes:
+- UniFi
+- EdgeRouter
+- UniFi Switches
+- Console Access
+- GUI Navigation
+- CLI Commands
+- Service Restarts
+- Recovery Procedures
+
+------------------------------------------------------------
+1. PLATFORM DIFFERENCES
+------------------------------------------------------------
+
+| Platform | GUI | CLI | Notes |
+|---|---|---|---|
+| UniFi Gateway | UniFi Network App | Linux shell + ubnt tools | Centralized management |
+| UniFi Switch | UniFi Network App | Linux shell | Most config via controller |
+| EdgeRouter | Standalone Web GUI | VyOS-style CLI | Full router CLI control |
+| UISP Routers | UISP | Linux shell | ISP-oriented |
+
+------------------------------------------------------------
+2. ACCESS METHODS
+------------------------------------------------------------
+
+GUI Access:
+https://<controller-ip>:8443
+
+SSH:
+ssh admin@192.168.1.1
+
+UniFi OS Shell:
+unifi-os shell
+
+------------------------------------------------------------
+3. COMMON COMMANDS
+------------------------------------------------------------
+
+Show interfaces:
+ip addr
+
+Show routes:
+ip route
+
+Show uptime:
+uptime
+
+Show CPU:
+top
+
+Show disk:
+df -h
+
+------------------------------------------------------------
+4. VLAN CONFIGURATION
+------------------------------------------------------------
+
+GUI:
+Settings -> Networks -> Create New Network
+
+EdgeRouter CLI:
+configure
+set interfaces ethernet eth1 vif 10 description STAFF
+set interfaces ethernet eth1 vif 10 address 192.168.10.1/24
+commit
+save
+exit
+
+------------------------------------------------------------
+5. DHCP
+------------------------------------------------------------
+
+Show leases:
+show dhcp leases
+
+Restart DHCP safely:
+systemctl restart dnsmasq
+
+------------------------------------------------------------
+6. FIREWALL
+------------------------------------------------------------
+
+GUI:
+Settings -> Security -> Traffic & Firewall Rules
+
+CLI:
+configure
+set firewall name WAN_IN rule 10 action accept
+set firewall name WAN_IN rule 10 state established enable
+set firewall name WAN_IN rule 10 state related enable
+commit
+save
+exit
+
+------------------------------------------------------------
+7. VPN
+------------------------------------------------------------
+
+Show VPN status:
+ipsec status
+
+Restart VPN:
+systemctl restart strongswan
+
+------------------------------------------------------------
+8. SERVICE RESTARTS
+------------------------------------------------------------
+
+Restart UniFi:
+systemctl restart unifi
+
+Restart SSH:
+systemctl restart ssh
+
+Restart Web UI:
+systemctl restart nginx
+
+CAUTION:
+Avoid restarting networking remotely:
+systemctl restart networking
+
+------------------------------------------------------------
+9. TROUBLESHOOTING
+------------------------------------------------------------
+
+Ping:
+ping 8.8.8.8
+
+Traceroute:
+traceroute 8.8.8.8
+
+Packet capture:
+tcpdump -i eth0
+
+ARP table:
+arp -a
+
+------------------------------------------------------------
+10. CONSOLE ACCESS
+------------------------------------------------------------
+
+Required:
+- USB Serial Adapter
+- RJ45 Console Cable
+- PuTTY / screen / minicom
+
+Default Serial Settings:
+115200 8N1
+Flow Control: None
+
+------------------------------------------------------------
+11. WINDOWS CONSOLE SETUP
+------------------------------------------------------------
+
+1. Install USB serial drivers
+2. Open Device Manager
+3. Find COM port
+4. Open PuTTY
+5. Select Serial
+6. Configure:
+   Speed: 115200
+   Data bits: 8
+   Parity: None
+   Stop bits: 1
+   Flow control: None
+7. Open session
+8. Press ENTER
+
+------------------------------------------------------------
+12. LINUX CONSOLE SETUP
+------------------------------------------------------------
+
+Identify adapter:
+dmesg | grep tty
+
+Typical device:
+ttyUSB0
+
+Connect:
+sudo screen /dev/ttyUSB0 115200
+
+Exit:
+CTRL+A
+K
+Y
+
+------------------------------------------------------------
+13. MACOS CONSOLE SETUP
+------------------------------------------------------------
+
+Find device:
+ls /dev/cu.*
+
+Connect:
+screen /dev/cu.usbserial-0001 115200
+
+------------------------------------------------------------
+14. EDGEROUTER INITIAL SETUP
+------------------------------------------------------------
+
+configure
+
+set system host-name EdgeRouter01
+set interfaces ethernet eth0 address 192.168.1.1/24
+set protocols static route 0.0.0.0/0 next-hop 192.168.1.254
+
+set system name-server 1.1.1.1
+set system name-server 8.8.8.8
+
+commit
+save
+exit
+
+------------------------------------------------------------
+15. SAFE CHANGE MANAGEMENT
+------------------------------------------------------------
+
+1. Backup config
+2. Make small changes
+3. Validate connectivity
+4. Commit
+5. Save
+6. Monitor logs
+
+------------------------------------------------------------
+16. HIGH RISK COMMANDS
+------------------------------------------------------------
+
+Avoid remotely:
+
+reboot
+systemctl restart networking
+ifdown eth0
+ip link set eth0 down
+factory reset
+
+------------------------------------------------------------
+END OF DOCUMENT
+------------------------------------------------------------
+

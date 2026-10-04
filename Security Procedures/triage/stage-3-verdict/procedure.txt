@@ -1,0 +1,236 @@
+STAGE 3 - VERDICT, CONTAINMENT, AND HANDOFF
+Part of: URL & Document Triage (see ../../WORKFLOW.txt)
+Companion file: ioc-record-template.txt
+Last reviewed: 2026-09-04
+
+PURPOSE
+-------
+Convert what stages 0-2 found into a decision, a record, and an action. This
+is the only stage with no script, because it is the only stage that is a
+judgement. Everything upstream gathers evidence; this stage weighs it.
+
+PROCEDURE
+---------
+
+1. Collect the flags
+   run_triage.sh writes them to <case>/flags.txt and the provisional verdict
+   to <case>/provisional-verdict.txt. Otherwise:
+     grep '^CHAIN::FLAG::' <case>/*/report.txt | sed 's/.*CHAIN::FLAG:://' | sort -u
+
+   Every flag carries its own weight, in the form:
+     <weight>::<label>          e.g. decisive::doc:dde-field
+
+2. Score
+   The scripts have already done this arithmetic; this section is here so you
+   can check it and argue with it.
+
+   WEIGHTS
+     decisive     sufficient alone. Verdict is MALICIOUS, no arithmetic.
+     strong       2 points. Two of them reach MALICIOUS.
+     supporting   1 point.
+     context      0 points. Recorded because it belongs in the report, but
+                  it never moves a verdict on its own.
+     incomplete   0 points, and floors the verdict at SUSPICIOUS. This is a
+                  check that DID NOT RUN - a missing tool, a file that would
+                  not open, a lookup a fetch policy suppressed.
+
+   THRESHOLDS
+     any decisive flag        MALICIOUS
+     weighted score >= 4      MALICIOUS
+     weighted score 2-3       SUSPICIOUS
+     weighted score <= 1      BENIGN
+     any incomplete flag      never BENIGN; minimum SUSPICIOUS
+
+   The weights come from reference/indicators.txt, which is the same table
+   the scripts encode. If you disagree with a weight, change it there and in
+   the emitting script together - the point of this design is that the
+   machine score and the written table cannot drift apart.
+
+   The categories below are what those flags cover. Two of them - pretext and
+   user impact - have no automated flags at all, because no script can read
+   intent. You supply them, and either can carry a verdict by itself.
+
+   HEADER / SENDER (stage 0)
+     [ ] SPF, DKIM, or DMARC failure
+     [ ] From / Return-Path / Reply-To / Message-ID domain mismatch
+     [ ] free webmail impersonating an organisation
+     [ ] display name impersonating a person or brand
+     [ ] sending IP geography or hosting provider inconsistent with the claim
+
+   CONTENT / PRETEXT (human assessment, stage 0 step 8)
+     [ ] urgency, fear, or a deadline
+     [ ] requests credentials, MFA approval, payment, or gift cards
+     [ ] impersonates leadership, IT, a vendor, or a known partner
+     [ ] asks to move the conversation to another channel
+
+   LINKS (stage 1)
+     [ ] domain registered under 30 days ago
+     [ ] typosquat or lookalike of a real brand
+     [ ] punycode / IDN homograph hostname
+     [ ] shortener or wrapper hiding the destination
+     [ ] meta-refresh or JavaScript redirect
+     [ ] password input field on the landing page
+     [ ] HTML smuggling indicators
+     [ ] QR code carrying the link
+     [ ] urlscan.io or VirusTotal shows a credential-harvest or malicious verdict
+
+   DOCUMENTS (stage 2)
+     [ ] macro auto-run trigger
+     [ ] suspicious macro keyword (shell / download / encode)
+     [ ] DDE or DDEAUTO field
+     [ ] TargetMode="External" or remote template
+     [ ] embedded executable, .hta, .lnk, .scr, or archive
+     [ ] PDF /OpenAction, /JavaScript, /Launch, or /EmbeddedFile
+     [ ] RTF Equation, OLE2Link, or Package object
+     [ ] extension does not match the real file type, or double extension
+     [ ] VirusTotal detections above zero
+     [ ] password-protected file with the password supplied in the message
+
+3. Check what the score could not see, and override it
+   The provisional verdict is arithmetic over what the scripts observed. It
+   is wrong in exactly three ways, and all three are your job.
+
+   a. RAISE IT for anything the scripts cannot detect
+      Each of these is decisive on its own and none produces a flag:
+        - the message asks for credentials, an MFA approval, a payment, or
+          gift cards
+        - it impersonates leadership, IT, a vendor, or a known partner
+        - the password for an attached archive was supplied in the body
+        - urlscan.io or a sandbox confirms a live credential-harvest page
+        - confirmed C2 communication
+        - anyone actually clicked, entered credentials, approved an MFA
+          prompt, or opened the attachment
+      A BENIGN score plus any one of these is a MALICIOUS verdict.
+
+   b. DO NOT let the score alone convince you on
+        - macro presence with no auto-run and no action keyword
+          (flagged as context, so it scores 0 - but people still react to it)
+        - a URL shortener alone; marketing uses them constantly
+        - a young domain alone; legitimate businesses register domains too
+        - encoding alone
+        - external relationships alone; every document with a hyperlink has
+          one, which is why it is only worth 1 point
+      A score of 2-3 built entirely from these is a thin SUSPICIOUS, and
+      saying so in the record is more useful than the number.
+
+   c. TREAT INCOMPLETE AS UNFINISHED, NOT AS CLEAN
+      Every incomplete flag names a check that did not run. The score already
+      refuses to call such a case BENIGN, but that is a floor, not an answer.
+      Before you close it:
+        - a missing tool  -> run setup/preflight.sh and re-run the case
+        - a fetch policy  -> get the same evidence from urlscan.io or a
+                             sandbox, which fetches from their infrastructure
+        - an unopenable file -> extract it in isolation first
+      Closing a case on a floored verdict means the answer is "we did not
+      look", and the record should say that in those words.
+
+4. Record the confidence
+   Low / Medium / High, and say why in one sentence. A high-flag count with
+   no reputation confirmation is Medium at best. A single VirusTotal hit with
+   30 engines agreeing is High on one flag.
+
+5. Check whether you have seen this before
+   Before writing the record, ask the previous cases:
+     ../search_cases.sh --file <case>/indicators.txt
+     ../search_cases.sh <a hash, domain, or subject fragment>
+
+   A hit changes the response, not just the paperwork. The same sender
+   infrastructure across two cases is a campaign, which means checking who
+   else received it and blocking the pattern rather than the instance. A hash
+   you cleared as benign three weeks ago is a reason to look harder at why it
+   is back, not a reason to close faster.
+
+6. Write the record
+     cp ioc-record-template.txt <case>/ioc-record.txt
+   Fill it in even for a BENIGN verdict. The benign records are what let you
+   recognise the next campaign as a repeat - and step 5 only works because
+   somebody wrote them.
+
+   Defang every indicator in it - lib/common.sh has defang() - so nobody
+   downstream clicks anything by reflex.
+
+7. Contain, by verdict
+
+   BENIGN
+     - close the ticket with the rationale
+     - tell the reporting user what you found; thank them, and mean it
+     - keep the record
+
+   SUSPICIOUS
+     - block the URLs and domains at the proxy or DNS layer anyway; the cost
+       of blocking a maybe is close to zero
+     - quarantine the message tenant-wide
+     - do not push hashes to a global blocklist on a maybe
+     - set a review date, or escalate for a second opinion
+
+   MALICIOUS - do all of it
+     Mail:
+       - quarantine or purge the message across every mailbox, not just the
+         reporter's
+       - M365: Compliance Center > Content Search by sender / subject /
+         Message-ID, then Purge. Or Search-Mailbox.
+       - Google Workspace: Admin > Reports > Email Log Search to identify
+         recipients, then Admin Quarantine / Delete
+       - block the sender address, sender domain, sending IP, and Reply-To at
+         the gateway
+     Network:
+       - block every domain and IP in the chain, not only the landing page,
+         at the proxy, DNS sinkhole, and firewall
+       - add the CT-log siblings from stage 1 step 5
+     Endpoint:
+       - push the file hashes to EDR / AV blocklists
+       - search the environment for other copies of the hash
+     File:
+       - quarantine the sample per your evidence process; do not delete it
+         while the case is open
+
+8. Assess and contain user impact
+   If anyone clicked the link or opened the document:
+     - force a password reset immediately
+     - force MFA re-registration
+     - review sign-in logs for anomalous access over the past 72 hours
+     - review mailbox rules for new auto-forward or auto-delete rules; this
+       is the standard business-email-compromise persistence move
+     - sweep the host that opened it: modules/macos-host-triage.txt
+   If a document executed, this stopped being a triage and became an
+   incident. Run modules/detection-engineering.txt in parallel and open an
+   incident record.
+
+9. Escalate to IR immediately - do not finish triage first - if any of:
+     - active C2 communication is confirmed
+     - the payload contains lateral movement commands (net use, psexec,
+       wmic /node)
+     - credential harvesting indicators are present (LSASS access, SAM dump)
+     - the file was opened on a production machine
+     - the payload is known ransomware or APT-associated tooling
+     - a domain or IP in the chain appears on a threat-intel blocklist
+
+10. Notify
+     - the reporting user: what it was, what you did, what to do next time
+     - other recipients of the same message, if any
+     - the abuse contact for the sending IP or hosting provider, from stage 0
+       step 5, if the campaign is worth reporting upstream
+     - whoever owns your own domain's DMARC policy, if stage 0 showed it is
+       at p=none
+
+11. Feed it forward
+    A verdict that changes nothing downstream was wasted work.
+      hashes + domains + IPs  -> modules/detection-engineering.txt
+      new detection rule      -> modules/detection-validation.md
+      unresolved sample       -> modules/detonation-lab/
+      host that opened it     -> modules/macos-host-triage.txt
+
+    The loop closes when the rule that fires on the next copy of this
+    campaign exists and has been proven to fire.
+
+WHAT THIS STAGE DOES NOT DO
+----------------------------
+- Attribute the campaign. Naming a threat actor from one email is guessing.
+- Author detection rules. That is the detection-engineering module.
+- Substitute for legal or HR process where a user's actions are in question.
+
+TIME BUDGET
+-----------
+Scoring and verdict     5 minutes
+Record                  10 minutes
+Containment             15-30 minutes, faster if the blocks are scripted

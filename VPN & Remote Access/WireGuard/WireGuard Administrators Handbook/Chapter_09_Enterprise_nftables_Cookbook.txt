@@ -1,0 +1,182 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 9 ENTERPRISE
+NFTABLES COOKBOOK
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter demonstrates production-ready nftables configurations for
+WireGuard gateways. nftables is the modern Linux packet filtering
+framework that replaces iptables on most current distributions.
+
+===============================================================================
+2. VERIFY NFTABLES
+===============================================================================
+
+Check version
+
+nft –version
+
+View current rules
+
+nft list ruleset
+
+Enable service
+
+systemctl enable nftables systemctl start nftables
+
+===============================================================================
+3. BASIC STRUCTURE
+===============================================================================
+
+table inet filter { chain input { type filter hook input priority 0;
+policy drop; }
+
+    chain forward {
+        type filter hook forward priority 0;
+        policy drop;
+    }
+
+    chain output {
+        type filter hook output priority 0;
+        policy accept;
+    }
+
+}
+
+===============================================================================
+4. ALLOW ESTABLISHED CONNECTIONS
+===============================================================================
+
+ct state established,related accept
+
+Allow loopback
+
+iif lo accept
+
+===============================================================================
+5. ALLOW WIREGUARD
+===============================================================================
+
+udp dport 51820 accept
+
+Example
+
+table inet filter { chain input { type filter hook input priority 0;
+policy drop;
+
+        iif lo accept
+        ct state established,related accept
+        udp dport 51820 accept
+    }
+
+}
+
+===============================================================================
+6. FORWARD VPN TRAFFIC
+===============================================================================
+
+iif “wg0” accept oif “wg0” accept
+
+Restrict to management VLAN
+
+iif “wg0” ip daddr 10.60.40.0/24 accept
+
+Default deny remains in effect.
+
+===============================================================================
+7. NAT
+===============================================================================
+
+table ip nat { chain postrouting { type nat hook postrouting priority
+100;
+
+        ip saddr 10.100.0.0/24 oif "eth0" masquerade
+    }
+
+}
+
+===============================================================================
+8. SETS
+===============================================================================
+
+Using sets simplifies administration.
+
+set admin_ports { type inet_service; elements = {22,53,443,389,636,3389}
+}
+
+Rule
+
+tcp dport @admin_ports accept
+
+===============================================================================
+9. LOGGING
+===============================================================================
+
+log prefix “WG DROP” level info
+
+Limit logging
+
+limit rate 5/second log prefix “WG DROP”
+
+===============================================================================
+10. COUNTERS
+===============================================================================
+
+counter
+
+Example
+
+udp dport 51820 counter accept
+
+Display counters
+
+nft list ruleset
+
+===============================================================================
+11. TROUBLESHOOTING
+===============================================================================
+
+Show rules
+
+nft list ruleset
+
+Trace packet
+
+nft monitor trace
+
+Common issues
+
+-   Wrong interface name
+-   Rule order
+-   Missing masquerade
+-   Missing forwarding
+-   Default drop policy
+
+===============================================================================
+12. MIGRATING FROM IPTABLES
+===============================================================================
+
+Compare rules
+
+iptables-save
+
+Translate (when available)
+
+iptables-translate
+
+Prefer writing native nftables rules for new deployments.
+
+===============================================================================
+13. BEST PRACTICES
+===============================================================================
+
+-   Use inet tables for IPv4 and IPv6 together.
+-   Default deny.
+-   Use sets for repeated objects.
+-   Use counters while testing.
+-   Log denied traffic selectively.
+-   Store rules in version control.
+-   Test changes from a remote console with rollback access.
+
+END OF CHAPTER 9

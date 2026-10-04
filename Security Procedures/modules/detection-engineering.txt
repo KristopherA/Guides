@@ -1,0 +1,248 @@
+SOC Detection Engineering Workflow for Malware Hunting
+======================================================
+
+Purpose
+-------
+Convert malware-analysis output into useful SOC detections, threat intelligence,
+and response actions.
+
+Workflow summary
+----------------
+
+  Malware sample
+      -> analysis job
+      -> behavior + artifacts
+      -> IOCs
+      -> candidate detections
+      -> validation
+      -> deployment
+      -> monitoring
+      -> feedback loop
+
+Roles
+-----
+
+1. Malware analyst
+   - Performs static and dynamic analysis.
+   - Extracts behavior and artifacts.
+
+2. Detection engineer
+   - Converts behavior into YARA, Sigma, SIEM, and EDR detections.
+   - Tests for false positives.
+
+3. SOC analyst
+   - Uses detections in alert triage.
+   - Provides feedback on alert quality.
+
+4. Threat intelligence analyst
+   - Enriches hashes, domains, IPs, malware family, actor links, and campaign data.
+
+5. Incident responder
+   - Uses detection output to scope and contain incidents.
+
+Step 1 - Intake
+---------------
+
+Required fields:
+
+- job ID
+- sample SHA256
+- source
+- acquisition time
+- suspected family
+- analyst
+- handling restrictions
+
+Step 2 - Analysis output collection
+-----------------------------------
+
+Collect:
+
+- file hashes
+- dropped files
+- domains
+- IP addresses
+- URLs
+- mutexes
+- process names
+- command lines
+- registry paths
+- scheduled tasks
+- services
+- persistence locations
+- privilege escalation attempts
+- evasion behaviors
+- C2 patterns
+- packet captures
+
+Step 3 - IOC normalization
+--------------------------
+
+Normalize indicators into this format:
+
+Indicator type | Value | Source | Confidence | First seen | Notes
+
+Example:
+
+sha256 | abc... | MalwareBazaar | high | 2026-05-04 | original sample
+domain | example.invalid | sandbox | medium | 2026-05-04 | attempted C2
+path | C:\Users\Public\x.exe | dynamic analysis | medium | 2026-05-04 | dropped file
+
+Step 4 - Detection mapping
+--------------------------
+
+Map observed behavior to detection types:
+
+1. YARA
+   Use for file/static detection.
+
+2. Sigma
+   Use for log-based detection logic.
+
+3. SIEM query
+   Use for production hunting.
+
+4. EDR behavioral rule
+   Use for process, command-line, and parent-child behavior.
+
+5. Network detection
+   Use for DNS, HTTP, TLS, IP, JA3/JA4, and URI patterns.
+
+6. Threat intelligence blocklist
+   Use carefully for high-confidence malicious infrastructure.
+
+Step 5 - YARA creation
+----------------------
+
+Recommended process:
+
+1. Run yarGen against the malware artifact folder.
+2. Review candidate strings.
+3. Remove generic strings.
+4. Prefer unique strings, config markers, protocol constants, or malware-specific text.
+5. Add metadata:
+   - author
+   - date
+   - sample hash
+   - family
+   - source
+   - reference
+   - confidence
+6. Test against known-good files.
+7. Test against related variants.
+8. Promote only after review.
+
+YARA quality checklist:
+
+[ ] Rule does not match common cleanware.
+[ ] Rule has useful metadata.
+[ ] Rule uses specific strings.
+[ ] Condition is not overly broad.
+[ ] Rule was tested against benign files.
+[ ] Rule was tested against related malware.
+[ ] Rule has an owner.
+
+Step 6 - Sigma or SIEM logic
+----------------------------
+
+Use behavior, not just IOCs.
+
+Good candidates:
+
+- suspicious parent-child process chains
+- script interpreter launching from unusual paths
+- LOLBin abuse
+- encoded PowerShell
+- suspicious scheduled task creation
+- startup-folder persistence
+- service creation from user-writable paths
+- command shell spawned by Office or browser process
+- DNS requests to algorithmic-looking domains
+
+Detection design template:
+
+Title:
+Description:
+Data source:
+Log source:
+Detection logic:
+False positives:
+Severity:
+Confidence:
+MITRE ATT&CK mapping:
+Response steps:
+Test cases:
+Owner:
+Review date:
+
+Step 7 - Validation
+-------------------
+
+Run these checks before production:
+
+1. Does it detect the known sample?
+2. Does it detect related samples?
+3. Does it avoid common benign software?
+4. Does it produce acceptable alert volume?
+5. Can a SOC analyst understand the alert?
+6. Are response steps included?
+7. Is there a rollback plan?
+
+Step 8 - Deployment
+-------------------
+
+Deployment stages:
+
+1. Lab validation
+2. Detection repository pull request
+3. Peer review
+4. Test/staging deployment
+5. Production deployment
+6. Alert monitoring
+7. Tuning window
+
+Step 9 - SOC triage playbook
+----------------------------
+
+When an alert fires:
+
+1. Confirm detection name and source.
+2. Identify affected host/user.
+3. Pull process tree.
+4. Pull command line and parent process.
+5. Check network connections.
+6. Search for related hashes and filenames.
+7. Search for same IOCs across the environment.
+8. Determine scope.
+9. Escalate if active compromise is suspected.
+10. Contain host if required.
+11. Preserve evidence.
+12. Document final disposition.
+
+Step 10 - Feedback loop
+-----------------------
+
+After deployment:
+
+1. Review alert volume.
+2. Track true positives and false positives.
+3. Tune noisy logic.
+4. Add new variants.
+5. Retire stale indicators.
+6. Update reports and rules.
+
+Final deliverables
+------------------
+
+For each malware-analysis job, produce:
+
+1. Final analysis report
+2. IOC table
+3. YARA rule
+4. Sigma/SIEM rule where applicable
+5. PCAP or network summary
+6. Artifact manifest
+7. SOC triage notes
+8. Confidence rating
+9. Recommended response actions
+

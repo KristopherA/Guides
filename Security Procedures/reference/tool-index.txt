@@ -1,0 +1,178 @@
+TOOL INDEX
+Part of: URL & Document Triage (see ../WORKFLOW.txt)
+Last reviewed: 2026-09-04
+
+WHAT THIS IS
+------------
+Every tool referenced anywhere in this folder: what it does, which stage
+uses it, and how to install it. Use it to answer "what was that tool called"
+and "do I actually need this".
+
+Stage column:
+  0  email intake      1  URL analysis      2  document analysis
+  3  verdict/handoff   L  detonation lab    H  host triage
+  -  not part of the triage workflow
+
+===========================================================================
+CORE - the triage workflow depends on these
+===========================================================================
+TOOL                 STAGE  PURPOSE                              INSTALL
+ripgrep (rg)         2      fast search of unpacked containers   brew install ripgrep
+oletools             2      olevba, oleobj, msodde, rtfobj,      pip3 install oletools
+                            oleid, oledir, oletimes, olemeta
+whois                0,1    domain age, IP ownership, abuse      brew install whois
+exiftool             2      file and document metadata           brew install exiftool
+checkdmarc           0      SPF / DKIM / DMARC verification      pip3 install checkdmarc
+urlextract           0      URL extraction from message bodies   pip3 install urlextract
+curl                 1      headers, redirects, body fetch       ships with macOS
+dig                  0,1    DNS forward, reverse, TXT            ships with macOS
+openssl              1      TLS certificate inspection           ships with macOS
+unzip                2      unpack OOXML                          ships with macOS
+file                 2      real type from magic bytes           ships with macOS
+shasum / md5         all    hashing                              ships with macOS
+xattr                2      macOS quarantine and provenance      ships with macOS
+python3              all    decoding, email parsing, JSON        brew install python3
+
+===========================================================================
+RECOMMENDED - each adds a check; scripts skip gracefully without them
+===========================================================================
+clamav               2      local signature AV scan              brew install clamav
+                            then: freshclam (~300 MB first run)
+vt-cli (vt)          2      VirusTotal hash lookup, no upload    brew install vt-cli
+                            then: vt init
+poppler (pdftotext)  1,2    text and links out of a PDF          brew install poppler
+mupdf (mutool)       2      PDF info, extract embedded files     brew install mupdf
+qpdf                 2      decrypt/normalise a PDF              brew install qpdf
+dnstwist             1      registered typosquats of a brand     brew install dnstwist
+zbar (zbarimg)       1      decode QR codes (quishing)           brew install zbar
+binwalk              2      appended / hidden content, carving   brew install binwalk
+yara                 3      rule matching                        brew install yara
+ssdeep               3      fuzzy hashing, campaign correlation  brew install ssdeep
+XLMMacroDeobfuscator 2      Excel 4.0 / XLM macros               pip3 install XLMMacroDeobfuscator
+msoffcrypto-tool     2      encrypted Office files               pip3 install msoffcrypto-tool
+pcodedmp             2      p-code stomping detection            pip3 install pcodedmp
+Didier Stevens Suite 2      pdfid, pdf-parser, oledump, rtfdump, git clone https://github.com/DidierStevens/DidierStevensSuite.git ~/tools/DidierStevens
+                            zipdump, xmldump, base64dump,        then: chmod +x ~/tools/DidierStevens/*.py
+                            xorsearch, numbers-to-string         and add that dir to PATH
+                            NOT on PyPI - git only, no pip package exists
+
+===========================================================================
+DEEP ANALYSIS - after a verdict, not during triage
+===========================================================================
+flare-floss (floss)  L      obfuscated / stack-built strings     pip3 install flare-floss
+vipermonkey          L      VBA emulation with IOC extraction    pip3 install vipermonkey
+pcode2code           L      decompile VBA p-code                 pip3 install pcode2code
+peepdf               L      interactive PDF exploration          pip3 install peepdf2
+jsbeautifier         L      deobfuscate JavaScript               pip3 install jsbeautifier
+box-js               L      sandboxed JS execution, urls.json    npm install -g box-js
+node                 L      run/instrument JavaScript            brew install node
+speakeasy            L      shellcode and PE emulation           pip3 install speakeasy-emulator
+capstone             L      disassembly                          pip3 install capstone
+pwntools             L      shellcode wrapping and analysis      pip3 install pwntools
+unicorn              L      CPU emulation                        pip3 install unicorn
+EvilClippy           L      strip VBA protection, test stomping  git clone https://github.com/outflanknl/EvilClippy.git ~/tools/EvilClippy
+                                                                 then: dotnet build ~/tools/EvilClippy
+ImHex                L      hex editor with pattern support      brew install --cask imhex
+Hex Fiend            L      lightweight hex editor               brew install --cask hex-fiend
+Cutter               L      reverse engineering GUI (radare2)    brew install --cask cutter
+Ghidra               L      full decompiler                      brew install --cask ghidra
+CyberChef            L      browser-based decoding pipeline      https://gchq.github.io/CyberChef
+
+Casks blocked by Gatekeeper on first launch ("app is damaged"): right-click
+the app, choose Open, once.
+
+===========================================================================
+LOCAL SERVICES (docker) - see ../tools/docker-services.txt
+===========================================================================
+web-check            1      one-page URL/domain recon dashboard
+ohmypcap             -      browser PCAP analysis
+Parrot Security      L      full toolset in a throwaway container
+
+===========================================================================
+INSTALLED APPLICATIONS (aliases in ../tools/)
+===========================================================================
+Malcat               2,L    interactive file analysis, YARA, carving.
+                            Prompt for driving it via MCP is in
+                            ../tools/malcat-analysis-prompt.txt
+Detect It Easy (die) 2,L    packer and compiler identification
+Maltego              3      link analysis and OSINT graphing
+IRFlow Timeline      3      incident timeline construction
+EAPTest              -      network authentication testing
+
+===========================================================================
+NOT PART OF URL/DOCUMENT TRIAGE
+===========================================================================
+These live in ../modules/cli-security-tools.md. They are a general security
+toolbox - vulnerability scanning, SBOM, secrets, PCAP, memory forensics,
+hardening - and only testssl touches this workflow.
+
+testssl              1      full TLS posture audit of a host     brew install testssl
+zeek / zeek-cut      L,3    traffic to structured logs           brew install zeek
+nuclei               -      template-based vulnerability scanner  brew install nuclei
+trivy                -      image / repo / IaC CVE and secrets   brew install trivy
+syft                 -      SBOM generation                      brew install syft
+grype                -      CVE matching against an SBOM         brew install grype
+trufflehog           -      verified live secrets in git history  brew install trufflehog
+gitleaks             -      git secrets scanning for CI           brew install gitleaks
+hashcat              -      GPU hash cracking                     brew install hashcat
+haiti / hashid       -      hash type identification              brew install haiti
+volatility3 (vol)    H      memory forensics                      pip3 install volatility3
+lynis                -      host hardening audit vs CIS/NIST      brew install lynis
+nmap                 -      host and service discovery            brew install nmap
+
+===========================================================================
+NO macOS BUILD - use REMnux or a Windows VM
+===========================================================================
+TOOL                 WHAT IT DID              macOS SUBSTITUTE
+scdbg / scdbgc       shellcode debugging      speakeasy, unicorn
+shellcode2exe        wrap shellcode in a PE   pwntools
+jmp2it / runsc32     execute shellcode        speakeasy
+PDF Stream Dumper    PDF stream browsing      pdfid + pdf-parser + mutool
+FileInsight          hex + decode workbench   ImHex, Hex Fiend, CyberChef
+cscript              run JS/VBS               box-js, node
+AMSI content capture script deobfuscation     none
+pyxswf / swf_mastah  Flash in documents       none needed (Flash EOL 2020)
+
+REMnux: https://remnux.org - run it in UTM or VMware Fusion.
+
+===========================================================================
+WEB SERVICES - no install
+===========================================================================
+Reputation
+  VirusTotal          https://www.virustotal.com
+  urlscan.io          https://urlscan.io
+  Google Safe Browsing https://transparencyreport.google.com/safe-browsing
+  PhishTank           https://www.phishtank.com
+  Cisco Talos         https://talosintelligence.com/reputation_center
+  AbuseIPDB           https://www.abuseipdb.com
+  MXToolbox           https://mxtoolbox.com/blacklists.aspx
+  SecurityTrails      https://securitytrails.com
+  crt.sh (CT logs)    https://crt.sh
+  emailrep.io         https://emailrep.io
+
+Sandboxes - never detonate on the analysis machine
+  ANY.RUN             https://app.any.run
+  Joe Sandbox         https://www.joesandbox.com
+  Hybrid Analysis     https://www.hybrid-analysis.com
+  Intezer Analyze     https://analyze.intezer.com
+
+Header analysis
+  Google Toolbox      https://toolbox.googleapps.com/apps/messageheader/
+  MXToolbox           https://mxtoolbox.com/EmailHeaders.aspx
+  PhishTool           https://www.phishtool.com
+
+Decoding
+  CyberChef           https://gchq.github.io/CyberChef
+  Unshorten           https://unshorten.it
+
+Anything sensitive goes to none of these. Hash lookups are safe; uploads are
+a data-loss event.
+
+===========================================================================
+INSTALLING EVERYTHING AT ONCE
+===========================================================================
+  ../triage/setup/install-tools.sh          # core + recommended
+  ../triage/setup/install-tools.sh --all    # adds deep-analysis extras
+  ../triage/setup/install-tools.sh --check   # report what is present
+
+Troubleshooting per tool: ../triage/setup/SETUP.txt

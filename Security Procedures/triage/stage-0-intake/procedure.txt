@@ -1,0 +1,174 @@
+STAGE 0 - INTAKE AND EVIDENCE HANDLING
+Part of: URL & Document Triage (see ../../WORKFLOW.txt)
+Companion script: extract_email.sh
+Last reviewed: 2026-09-04
+
+PURPOSE
+-------
+Turn "something suspicious arrived" into a defined set of artefacts you can
+triage: a hashed original, a header assessment, a list of URLs, and a folder
+of saved attachments. Nothing here judges the content. It only establishes
+what you have and preserves it.
+
+WHEN TO SKIP THIS STAGE
+------------------------
+Skip it if you were handed a bare URL or a file that is already on disk with
+no email context. Go straight to stage 1 or stage 2. Everything downstream
+works without stage 0 - it only adds the sender-authentication evidence and
+the mailbox-wide containment options that a reported email makes possible.
+
+RULE #1: Do not open the message in a mail client to "check it". Previewing
+renders remote content, confirms the address is live, and can trigger tracking.
+Work from the raw source.
+
+PROCEDURE
+---------
+
+1. Obtain the raw source
+   The safe intake paths, best first:
+     a. The user's "Report Phishing" button, which routes to the security
+        mailbox as an attachment.
+     b. The user forwards the message AS AN ATTACHMENT (.eml or .msg).
+        Never inline - inline forwarding rewrites headers and destroys the
+        evidence you need in step 4.
+     c. Export from the client:
+        - Outlook:  File > Save As > .msg, or File > Properties >
+                    Internet Headers for headers alone
+        - Outlook web / M365: ... > View > View message source
+        - Gmail:    ... > Show original > Download Original
+        - Apple Mail: View > Message > Raw Source (Cmd+Opt+U)
+
+   Outlook .msg is a different container from .eml. extract_email.sh needs
+   .eml, so export or convert first. If you only have headers and no body,
+   steps 2-4 still work; steps 5-6 do not.
+
+2. Establish the case folder and hash the original
+   Do this before anything else, so the record shows the file as received.
+     mkdir -p ~/ir-cases/CASE-2026-001
+     cd ~/ir-cases/CASE-2026-001
+     cp /path/to/reported.eml .
+     shasum -a 256 reported.eml
+     md5 -q reported.eml
+   Record both hashes in the ticket. Work only on the copy from here on.
+
+   Every stage script accepts CASE_DIR so all output lands together:
+     export CASE_DIR=~/ir-cases/CASE-2026-001
+
+   Optional, if you want the original protected against accidental change:
+     chflags uchg reported.eml        # macOS immutability flag
+
+3. Dump the headers and compare the sender identity fields
+     ./extract_email.sh reported.eml
+   The four fields that matter, and what a mismatch means:
+     From          what the recipient sees. Freely forgeable.
+     Return-Path   where bounces go. Should share the From domain.
+     Reply-To      where a reply actually goes. A mismatch here is the
+                   single most common business-email-compromise tell.
+     Message-ID    normally stamped by the sending domain's own server.
+   Also collect: Sender, X-Mailer, X-Originating-IP, and the display name
+   separately from the address - "IT Helpdesk <random@gmail.com>" is an
+   impersonation even though nothing is technically spoofed.
+
+4. Verify sender authentication
+   First read what the receiving gateway already concluded:
+     Authentication-Results: ... spf=fail ... dkim=none ... dmarc=fail
+   Then check the domain's published records yourself, because the header can
+   be absent, truncated, or (in a forwarded copy) about the forwarder:
+     checkdmarc example.com
+     dig +short TXT example.com            # SPF
+     dig +short TXT _dmarc.example.com     # DMARC policy
+   Reading it:
+     spf.valid false      the sending server was not authorised by the domain
+     dkim.valid false     the message was altered, or was never signed by it
+     dmarc policy none    the domain publishes no enforcement - trivially
+                          spoofable, and worth flagging to whoever owns it
+     dmarc policy reject  strictest; a fail here is strong evidence
+
+   A pass is not innocence. A compromised legitimate mailbox passes every
+   check, because it really is the legitimate sender.
+
+5. Trace the Received chain to the origin
+   Received headers stack newest-first, so read from the BOTTOM up: the
+   lowest external hop is closest to the sender.
+     dig +short -x <ORIGIN_IP>
+     whois <ORIGIN_IP> | grep -Ei 'orgname|netname|country|abuse'
+   Note the hosting provider and country against what the message claims,
+   and keep the abuse contact - you may file a report in stage 3.
+   Reputation: https://www.abuseipdb.com/check/<IP>
+
+6. Extract every URL from the body
+   Pull from the raw source, not the rendered message, so you get the real
+   href and not the display text.
+   The script does this and defangs the list. Manually:
+     python3 -c "
+   import email,re,sys
+   m=email.message_from_file(open(sys.argv[1],errors='ignore'))
+   b=''.join((p.get_payload(decode=True) or b'').decode(errors='ignore')
+             for p in m.walk() if p.get_content_type() in ('text/plain','text/html'))
+   print('\n'.join(sorted(set(re.findall(r'https?://[^\s\"'\''<>)\]]+', b)))))
+   " reported.eml
+
+   Each URL goes to stage 1. Do not shortcut this by eyeballing the domain.
+
+   No URLs and no attachments does not mean nothing is there. Check the
+   message for images - a QR code carries a link that no text extraction
+   will ever see:
+     zbarimg attachment.png
+
+7. Save and identify every attachment
+   The script writes them to <case>/stage-0-intake/attachments/ and hashes
+   each one. Then compare each filename against its real type:
+     file attachments/*
+   A mismatch, or a double extension like invoice.pdf.html, is a flag in its
+   own right. Each attachment goes to stage 2.
+
+   Password-protected archive with the password helpfully supplied in the
+   message body is a deliberate move to defeat the mail gateway's scanner.
+   Treat it as malicious-until-proven-otherwise and extract only in an
+   isolated environment.
+
+8. Assess what the message is asking for
+   This is the human half of the assessment and no script does it. Any yes
+   here means treat the message as potentially malicious regardless of what
+   the technical checks say:
+     - creates urgency, fear, or a deadline
+     - requests credentials, an MFA approval, a payment, or gift cards
+     - impersonates leadership, IT, a vendor, or a known partner
+     - asks you to move the conversation to another channel
+     - the sender is unexpected in this context
+
+9. Establish user impact before you finish the stage
+   Ask, and record the answers - they set the containment scope in stage 3:
+     - Did anyone click the link?
+     - Did anyone enter credentials?
+     - Did anyone approve an MFA prompt?
+     - Was the attachment opened, and on which machine?
+   If a document was opened on a real workstation, that host needs its own
+   sweep: modules/macos-host-triage.txt.
+
+HANDOFF
+-------
+  URLs        -> ../stage-1-url/procedure.txt      (CHAIN::EXTRACTED_URL::)
+  Attachments -> ../stage-2-document/procedure.txt (CHAIN::ATTACHMENT::)
+  Auth fails  -> ../stage-3-verdict/procedure.txt  (CHAIN::AUTH_FAIL::)
+  Red flags   -> ../stage-3-verdict/procedure.txt  (CHAIN::FLAG::<weight>::)
+
+Or run all of it in one pass:
+  CASE_DIR=~/ir-cases/CASE-001 ../run_triage.sh --eml reported.eml
+
+WHAT THIS STAGE DOES NOT DO
+----------------------------
+- .msg conversion. Export as .eml from the client first.
+- Encrypted or S/MIME-signed message bodies.
+- Attachments nested inside password-protected archives.
+- Any judgement about the URLs or files. That is stages 1 and 2.
+- Anything at all about whether the sender's mailbox is compromised - a
+  message that passes SPF, DKIM, and DMARC and is still malicious means you
+  are looking at account takeover, not spoofing, and that is an incident,
+  not a phishing triage.
+
+TIME BUDGET
+-----------
+Intake and hashing        under 5 minutes
+Header and auth review    5-10 minutes
+Extraction and handoff    5 minutes

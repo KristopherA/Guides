@@ -1,0 +1,214 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 7 POLICY-BASED
+ROUTING (PBR)
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+Policy-Based Routing (PBR) allows Linux to choose different routing
+tables based on criteria such as source address, destination address,
+interface, or packet marks. It is commonly used with WireGuard for
+multi-WAN, management networks, customer isolation, and overlapping
+address spaces.
+
+===============================================================================
+2. STANDARD ROUTING VS PBR
+===============================================================================
+
+Standard Routing
+
+One routing table determines the path for all traffic.
+
+Application | Main Routing Table | Interface
+
+Policy-Based Routing
+
+Application | Routing Policy (ip rule) | Selected Routing Table |
+Interface
+
+===============================================================================
+3. ROUTING TABLES
+===============================================================================
+
+Display routing tables
+
+cat /etc/iproute2/rt_tables
+
+Add a custom table
+
+echo “200 wireguard” >> /etc/iproute2/rt_tables
+
+Example
+
+255 local 254 main 253 default 200 wireguard
+
+Use descriptive names for custom tables.
+
+===============================================================================
+4. VIEWING POLICY RULES
+===============================================================================
+
+Display rules
+
+ip rule show
+
+Typical output
+
+0: from all lookup local 32766: from all lookup main 32767: from all
+lookup default
+
+Display a routing table
+
+ip route show table wireguard
+
+===============================================================================
+5. SOURCE-BASED ROUTING
+===============================================================================
+
+Route all VPN client traffic using a dedicated table.
+
+Create the route
+
+ip route add default via 10.60.1.1 dev ens18 table wireguard
+
+Create the rule
+
+ip rule add from 10.100.0.0/24 lookup wireguard
+
+Flush cached routes
+
+ip route flush cache
+
+Verify
+
+ip rule show ip route show table wireguard
+
+===============================================================================
+6. MULTIPLE INTERNET CONNECTIONS
+===============================================================================
+
+Example
+
+ISP-A | eth0 | Server | eth1 | ISP-B
+
+Example tables
+
+Table 100 ISP-A Table 200 ISP-B
+
+Example rules
+
+ip rule add from 10.100.0.0/24 lookup 100 ip rule add from 10.200.0.0/24
+lookup 200
+
+Use cases
+
+-   WAN redundancy
+-   Traffic engineering
+-   Cost optimization
+
+===============================================================================
+7. MANAGEMENT NETWORK ISOLATION
+===============================================================================
+
+VPN Clients
+
+10.100.0.0/24
+
+Management
+
+10.60.40.0/24
+
+Rule
+
+ip rule add from 10.100.0.0/24 lookup mgmt
+
+Table
+
+ip route add 10.60.40.0/24 dev wg0 table mgmt
+
+This prevents administrative traffic from using the default routing
+table.
+
+===============================================================================
+8. OVERLAPPING NETWORKS
+===============================================================================
+
+Customer A
+
+192.168.1.0/24
+
+Customer B
+
+192.168.1.0/24
+
+Separate routing tables can direct each customer’s traffic through a
+different WireGuard interface.
+
+Example
+
+wg1 -> Customer A wg2 -> Customer B
+
+===============================================================================
+9. PACKET MARKING
+===============================================================================
+
+iptables example
+
+iptables -t mangle -A PREROUTING -s 10.100.0.0/24 -j MARK –set-mark 10
+
+Routing rule
+
+ip rule add fwmark 10 table wireguard
+
+Packet marking enables routing decisions beyond source and destination
+addresses.
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Show rules
+
+ip rule
+
+Show routes
+
+ip route ip route show table wireguard
+
+Test routing
+
+ip route get 10.60.40.25
+
+Capture traffic
+
+tcpdump -ni wg0
+
+Common problems
+
+-   Missing routing table
+-   Rule priority incorrect
+-   Route missing from custom table
+-   Cached routes not flushed
+-   Firewall blocking forwarded traffic
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Name routing tables.
+-   Keep rules simple.
+-   Document priorities.
+-   Use source routing before packet marking where practical.
+-   Test with ip route get before deployment.
+-   Keep separate tables for customer environments.
+-   Review policy rules during every network change.
+
+===============================================================================
+12. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] Routing tables documented [ ] Custom tables named [ ] Policy rules
+verified [ ] Route cache flushed [ ] Return paths tested [ ] Firewall
+validated [ ] Packet captures completed [ ] Documentation updated
+
+END OF CHAPTER 7

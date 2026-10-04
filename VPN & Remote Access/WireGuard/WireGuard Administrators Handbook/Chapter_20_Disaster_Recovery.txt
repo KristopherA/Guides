@@ -1,0 +1,191 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 20 DISASTER
+RECOVERY
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter describes how to prepare for, recover from, and validate
+recovery after failures affecting a WireGuard deployment. The goal is to
+minimize downtime while preserving the confidentiality and integrity of
+VPN configurations and cryptographic keys.
+
+===============================================================================
+2. RECOVERY OBJECTIVES
+===============================================================================
+
+Define recovery targets before an incident.
+
+Recovery Time Objective (RTO) - Maximum acceptable downtime.
+
+Recovery Point Objective (RPO) - Maximum acceptable configuration or
+data loss.
+
+Example
+
+Service RTO RPO VPN Gateway 30 min 15 min Branch Gateway 2 hours 1 hour
+Lab Environment 24 hours 24 hours
+
+===============================================================================
+3. WHAT TO BACK UP
+===============================================================================
+
+Critical data
+
+/etc/wireguard/ Private keys Public keys Firewall configuration Routing
+configuration DNS configuration Keepalived/VRRP configuration Systemd
+overrides Monitoring configuration Automation playbooks Documentation
+
+Never rely on a single copy of the VPN configuration.
+
+===============================================================================
+4. BACKUP METHODS
+===============================================================================
+
+Create an archive
+
+tar czf wireguard-backup-$(date +%F).tar.gz /etc/wireguard
+
+Firewall
+
+iptables-save > firewall.rules
+
+nftables
+
+nft list ruleset > nftables.conf
+
+Store backups in encrypted, access-controlled locations.
+
+===============================================================================
+5. RECOVERING A FAILED SERVER
+===============================================================================
+
+Procedure
+
+1.  Install the operating system.
+2.  Install WireGuard packages.
+3.  Restore configuration files.
+4.  Restore firewall configuration.
+5.  Restore routing configuration.
+6.  Verify file permissions.
+7.  Enable IP forwarding.
+8.  Start the service.
+9.  Validate connectivity.
+
+Validation
+
+wg ip addr ip route journalctl -u wg-quick@wg0
+
+===============================================================================
+6. RECOVERING FROM KEY COMPROMISE
+===============================================================================
+
+Indicators
+
+-   Lost administrator device
+-   Unauthorized access
+-   Suspected key exposure
+
+Procedure
+
+1.  Remove the affected peer.
+2.  Generate a new key pair.
+3.  Update server configuration.
+4.  Deploy new client configuration.
+5.  Restart the tunnel.
+6.  Verify the old key no longer connects.
+7.  Document the incident.
+
+===============================================================================
+7. CHANGE ROLLBACK
+===============================================================================
+
+Before changes
+
+-   Create a backup.
+-   Export firewall rules.
+-   Record current routing tables.
+
+Rollback
+
+1.  Stop WireGuard.
+2.  Restore configuration.
+3.  Restore firewall rules.
+4.  Restart services.
+5.  Verify connectivity.
+
+===============================================================================
+8. DISASTER RECOVERY TESTING
+===============================================================================
+
+Test regularly.
+
+Suggested schedule
+
+Quarterly - Restore configuration to a test server. - Verify tunnel
+establishment. - Validate routing. - Confirm monitoring.
+
+Annually - Full disaster recovery exercise.
+
+===============================================================================
+9. BUSINESS CONTINUITY
+===============================================================================
+
+Consider:
+
+-   Secondary VPN gateway
+-   Alternate Internet connection
+-   Secondary DNS
+-   Offsite backups
+-   Configuration repository
+-   Spare hardware or virtual machine templates
+
+===============================================================================
+10. POST-RECOVERY VALIDATION
+===============================================================================
+
+Verify
+
+wg show wg show latest-handshakes ip route ip addr ss -lunp | grep 51820
+
+Connectivity
+
+ping remote gateways SSH to managed systems Verify DNS resolution
+Confirm application access
+
+===============================================================================
+11. DOCUMENTATION
+===============================================================================
+
+Maintain:
+
+-   Network diagrams
+-   IP addressing plan
+-   Peer inventory
+-   Backup locations
+-   Recovery procedures
+-   Contact information
+-   Change history
+
+Documentation should be version controlled and reviewed regularly.
+
+===============================================================================
+12. BEST PRACTICES
+===============================================================================
+
+-   Test restores, not just backups.
+-   Encrypt all backup media.
+-   Store copies offsite.
+-   Protect private keys.
+-   Review recovery procedures after every incident.
+-   Keep recovery documentation current.
+
+===============================================================================
+13. DISASTER RECOVERY CHECKLIST
+===============================================================================
+
+[ ] Backups verified [ ] Recovery tested [ ] Keys protected [ ] Firewall
+backed up [ ] Routing documented [ ] Offsite copy available [ ]
+Monitoring restored [ ] Documentation updated
+
+END OF CHAPTER 20

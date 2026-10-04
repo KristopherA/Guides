@@ -1,0 +1,8 @@
+ 
+How To Reset the Maintenance Count on the M604 M605 M606 series
+1. Press the Home button on the printer's control panel.
+2. Open the "Administration" menu.
+3. Select "Manage Supplies".
+4. Select "Reset Supplies".
+5. Select "New Maintenance Kit".
+6. Select "Yes" to reset the maintenance kit counter.

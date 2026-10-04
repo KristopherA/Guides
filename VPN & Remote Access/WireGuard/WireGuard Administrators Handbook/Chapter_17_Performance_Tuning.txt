@@ -1,0 +1,193 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 17 PERFORMANCE
+TUNING
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter explains how to optimize WireGuard performance in
+enterprise deployments by tuning the operating system, network stack,
+MTU, routing, and hardware while maintaining stability.
+
+===============================================================================
+2. PERFORMANCE FACTORS
+===============================================================================
+
+Primary factors affecting throughput:
+
+-   CPU performance
+-   Encryption overhead
+-   MTU and fragmentation
+-   Internet latency
+-   Packet loss
+-   NIC performance
+-   Firewall processing
+-   Disk performance (logging)
+
+===============================================================================
+3. ESTABLISH A BASELINE
+===============================================================================
+
+Measure before tuning.
+
+CPU
+
+top htop
+
+Network
+
+ip -s link show wg0
+
+Latency
+
+ping 10.100.0.1
+
+Bandwidth
+
+iperf3 -s iperf3 -c 10.100.0.1
+
+===============================================================================
+4. MTU OPTIMIZATION
+===============================================================================
+
+Typical values
+
+1500 Ethernet 1420 WireGuard default 1400 Conservative 1380 VPN over VPN
+1280 IPv6 minimum
+
+Test
+
+ping -M do -s 1400 10.60.10.10
+
+Reduce MTU until fragmentation no longer occurs.
+
+===============================================================================
+5. TCP MSS CLAMPING
+===============================================================================
+
+Prevent oversized TCP segments.
+
+iptables
+
+iptables -A FORWARD -p tcp –tcp-flags SYN,RST SYN -j TCPMSS
+–clamp-mss-to-pmtu
+
+===============================================================================
+6. CPU CONSIDERATIONS
+===============================================================================
+
+Modern CPUs with AES acceleration generally perform best.
+
+Monitor CPU
+
+mpstat -P ALL 1 top htop
+
+Watch for a single CPU core becoming saturated.
+
+===============================================================================
+7. NIC OFFLOADING
+===============================================================================
+
+View settings
+
+ethtool -k eth0
+
+View interface statistics
+
+ethtool -S eth0
+
+Test carefully before disabling offload features in production.
+
+===============================================================================
+8. KERNEL TUNING
+===============================================================================
+
+Review
+
+sysctl -a | grep net.core
+
+Common values to review
+
+net.core.rmem_max net.core.wmem_max net.ipv4.tcp_rmem net.ipv4.tcp_wmem
+
+Document all changes and test after each adjustment.
+
+===============================================================================
+9. MONITORING
+===============================================================================
+
+WireGuard
+
+wg show
+
+Interface statistics
+
+ip -s link show wg0
+
+Socket statistics
+
+ss -s
+
+System logs
+
+journalctl -u wg-quick@wg0
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Slow throughput
+
+-   MTU mismatch
+-   High CPU
+-   Packet loss
+-   Firewall bottleneck
+
+High latency
+
+-   Internet congestion
+-   Routing issue
+-   Bufferbloat
+
+Low transfer counters
+
+-   Idle tunnel
+-   Routing problem
+-   Firewall
+
+===============================================================================
+11. CAPACITY PLANNING
+===============================================================================
+
+Consider:
+
+-   Concurrent users
+-   Average bandwidth
+-   Peak bandwidth
+-   Geographic latency
+-   Redundancy
+-   Future growth
+
+Perform regular load testing before expanding deployments.
+
+===============================================================================
+12. BEST PRACTICES
+===============================================================================
+
+-   Measure before tuning.
+-   Change one setting at a time.
+-   Record baseline metrics.
+-   Test from multiple locations.
+-   Monitor handshake age and transfer counters.
+-   Revalidate performance after kernel or firewall updates.
+
+===============================================================================
+13. PERFORMANCE CHECKLIST
+===============================================================================
+
+[ ] Baseline collected [ ] MTU verified [ ] MSS clamping tested [ ] CPU
+utilization acceptable [ ] Interface counters normal [ ] Throughput
+validated with iperf3 [ ] Monitoring configured [ ] Documentation
+updated
+
+END OF CHAPTER 17

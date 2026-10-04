@@ -1,0 +1,138 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 4 SERVER
+CONFIGURATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter explains how to build and maintain a production-ready
+WireGuard server that supports multiple peers, segmented networks, and
+secure enterprise operations.
+
+===============================================================================
+2. DIRECTORY LAYOUT
+===============================================================================
+
+/etc/wireguard/ wg0.conf private.key public.key
+
+Protect sensitive files:
+
+chmod 600 /etc/wireguard/private.key chmod 600 /etc/wireguard/*.conf
+
+===============================================================================
+3. INTERFACE OPTIONS
+===============================================================================
+
+Example:
+
+[Interface] Address = 10.100.0.1/24 ListenPort = 51820 PrivateKey =
+SERVER_PRIVATE_KEY MTU = 1420 SaveConfig = false
+
+Address VPN address assigned to the server.
+
+ListenPort UDP port. Default examples use 51820.
+
+PrivateKey Server’s private key. Never share it.
+
+MTU Reduce if fragmentation occurs (1380–1420 are common values).
+
+SaveConfig Keep false in production so configuration remains under
+change control.
+
+===============================================================================
+4. PEER OPTIONS
+===============================================================================
+
+Example:
+
+[Peer] PublicKey = CLIENT_PUBLIC_KEY AllowedIPs = 10.100.0.10/32
+PersistentKeepalive = 25
+
+PublicKey Identifies the remote peer.
+
+AllowedIPs Routes associated with this peer.
+
+PersistentKeepalive Recommended for clients behind NAT.
+
+===============================================================================
+5. MULTIPLE PEERS
+===============================================================================
+
+Add one [Peer] section per device.
+
+[Peer] PublicKey = LAPTOP_KEY AllowedIPs = 10.100.0.11/32
+
+[Peer] PublicKey = PHONE_KEY AllowedIPs = 10.100.0.12/32
+
+Never assign the same VPN address to multiple peers.
+
+===============================================================================
+6. POSTUP / POSTDOWN
+===============================================================================
+
+Example:
+
+PostUp = iptables -A INPUT -i wg0 -j ACCEPT PostUp = iptables -A FORWARD
+-i wg0 -j ACCEPT PostUp = iptables -t nat -A POSTROUTING -s
+10.100.0.0/24 -o eth0 -j MASQUERADE
+
+PostDown = iptables -D INPUT -i wg0 -j ACCEPT PostDown = iptables -D
+FORWARD -i wg0 -j ACCEPT PostDown = iptables -t nat -D POSTROUTING -s
+10.100.0.0/24 -o eth0 -j MASQUERADE
+
+===============================================================================
+7. ACCESS TO SEGMENTED NETWORKS
+===============================================================================
+
+Typical enterprise networks:
+
+10.60.10.0/24 Servers 10.60.20.0/24 Hypervisors 10.60.30.0/24 Storage
+10.60.40.0/24 Management
+
+Restrict access with firewall policy rather than exposing every subnet.
+
+===============================================================================
+8. MULTIPLE INTERFACES
+===============================================================================
+
+wg0 Corporate IT wg1 Customer A wg2 Customer B wg3 Lab
+
+Separate interfaces simplify policy and troubleshooting.
+
+===============================================================================
+9. VALIDATION
+===============================================================================
+
+wg wg show ip addr show wg0 ip route ss -lunp | grep 51820 journalctl -u
+wg-quick@wg0 -f
+
+Expected:
+
+-   Recent handshake
+-   Transfer counters increasing
+-   UDP listener present
+-   Correct routes installed
+
+===============================================================================
+10. COMMON CONFIGURATION ERRORS
+===============================================================================
+
+Service fails to start - Syntax error - Incorrect permissions - Invalid
+private key
+
+Handshake succeeds but traffic fails - Missing routes - Missing IP
+forwarding - Missing FORWARD rule - Missing NAT
+
+Intermittent connectivity - MTU too high - Missing PersistentKeepalive -
+Firewall timeout
+
+===============================================================================
+11. PRODUCTION CHECKLIST
+===============================================================================
+
+[ ] SaveConfig disabled [ ] Configuration backed up [ ] Private key
+protected [ ] One peer per device [ ] Firewall rules documented [ ] IP
+forwarding enabled [ ] Monitoring configured [ ] Recent handshakes
+verified [ ] Test restore procedure completed
+
+END OF CHAPTER 4

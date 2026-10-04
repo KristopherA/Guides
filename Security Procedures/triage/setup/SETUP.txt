@@ -1,0 +1,247 @@
+MACHINE SETUP AND TROUBLESHOOTING
+Part of: URL & Document Triage (see ../../WORKFLOW.txt)
+Companion script: install-tools.sh
+Last reviewed: 2026-09-04
+Platform: macOS (Apple Silicon or Intel). Linux notes at the end.
+
+FAST PATH
+---------
+  ./preflight.sh              # check, install what is missing, re-verify
+  vt init                     # paste your VirusTotal API key
+  ../test/run_tests.sh         # confirm the toolkit actually works
+
+That is the whole setup. The rest of this file is what to do when a step
+fails, and what each tool is actually for.
+
+preflight.sh is the one to run. It audits every tool the four stages call,
+says what each missing one costs you, installs them, then re-checks and
+tells you whether the toolkit can produce a trustworthy verdict.
+
+  ./preflight.sh            check, install, verify
+  ./preflight.sh --check     report only, install nothing (works on Linux too)
+  ./preflight.sh --all       also install the deep-analysis extras
+  ./preflight.sh --quiet     one-line summary, for a scheduled job
+
+install-tools.sh is the installer preflight.sh drives. Use it directly only
+if you want a specific tier:
+  --core    only what the stage scripts genuinely need
+  --all     adds deep-analysis extras (emulation, deobfuscation)
+  --venv    installs the Python tools into ~/.triage-venv instead of user site
+  --check   installs nothing, reports what is present and what is missing
+
+Both are idempotent. Re-running installs only what is missing.
+
+WHY THIS MATTERS MORE THAN IT LOOKS
+-----------------------------------
+A missing tool does not make a stage fail. It makes the stage skip a check
+and carry on, and the report still looks complete. Stage 2 without ripgrep
+prints a confident document report having never examined a single external
+relationship - no remote templates, no DDE fields, no UNC paths.
+
+The stages now record every skipped check as an incomplete-analysis flag,
+and a case carrying one cannot be closed BENIGN. That is a safety net, not
+a substitute for having the tools. Run preflight.sh after any tool upgrade
+and after any macOS major upgrade.
+
+---------------------------------------------------------------------------
+WHAT EACH TOOL IS FOR
+---------------------------------------------------------------------------
+
+Ships with macOS - no install needed:
+  unzip       stage 2   unpack OOXML containers
+  shasum, md5 all       hashing
+  file        stage 2   real file type from magic bytes
+  xattr       stage 2   quarantine flag and download provenance
+  curl        stage 1   headers, redirect chain, body fetch
+  dig         stage 0/1 DNS, reverse DNS, TXT records
+  openssl     stage 1   TLS certificate inspection
+  python3     all       decoding, email parsing, JSON
+  strings     stage 2   readable indicators in a binary
+
+REQUIRED (a stage loses a check it cannot substitute):
+  ripgrep (rg)   stage 2   the external-relationship scan - the single most
+                           important check in document triage
+  oletools       stage 2   olevba (macros), oleobj (embedded objects),
+                           msodde (DDE fields), rtfobj (RTF objects)
+  whois          stage 0/1 domain age, IP ownership, abuse contact
+  exiftool       stage 2   document metadata
+  checkdmarc     stage 0   SPF / DKIM / DMARC verification
+  urlextract     stage 0   URL extraction from message bodies
+
+RECOMMENDED (each adds a check; scripts skip gracefully if absent):
+  clamav         stage 2   local signature AV scan
+  vt-cli         stage 2   VirusTotal hash lookup (never uploads the file)
+  poppler        stage 1/2 pdftotext - links in PDF text
+  mupdf          stage 2   mutool - PDF info and embedded-file extraction
+  qpdf           stage 2   decrypt PDFs so they can be analysed
+  dnstwist       stage 1   registered typosquats of a brand domain
+  zbar           stage 1   zbarimg - decode QR codes (quishing)
+  binwalk        stage 2   content appended past the end of the format
+  yara           stage 3   rule matching for the detection handoff
+  ssdeep         stage 3   fuzzy hashing; correlates campaign variants
+  XLMMacroDeobfuscator     Excel 4.0 / XLM macros, which olevba cannot see
+  msoffcrypto-tool         encrypted Office files (try VelvetSweatshop)
+  pcodedmp                 p-code stomping detection
+  Didier Stevens Suite     pdfid, pdf-parser, oledump, rtfdump, zipdump,
+                           base64dump, xorsearch.
+                           NOT ON PyPI - there is no pip package for these.
+                           They install by git clone; install-tools.sh does
+                           it, or see the entry in TROUBLESHOOTING below.
+
+EXTRAS (--all; for the deep dive after a verdict, not for triage):
+  flare-floss    obfuscated and stack-constructed strings
+  vipermonkey    VBA emulation
+  pcode2code     p-code decompilation
+  jsbeautifier   JS deobfuscation
+  node           box-js and JS execution instrumentation
+  speakeasy      shellcode emulation
+  capstone       disassembly
+  testssl        full TLS posture audit of a host
+
+No macOS build exists for scdbg, shellcode2exe, jmp2it, runsc32, cscript,
+PDF Stream Dumper, or FileInsight. If you need those, use REMnux
+(https://remnux.org) in a VM. macOS substitutions are listed in
+../../reference/tool-index.txt.
+
+---------------------------------------------------------------------------
+MANUAL STEPS THE INSTALLER CANNOT DO
+---------------------------------------------------------------------------
+
+1. VirusTotal API key
+   Get a free key at https://www.virustotal.com (sign in > profile > API key):
+     vt init
+   Free tier is 4 lookups per minute, which is fine for one-off triage.
+   Hash lookups only - never `vt file scan`, which uploads the document.
+
+2. ClamAV definitions
+   ClamAV installs with an empty database and errors until definitions are
+   downloaded. The installer handles the first download; keep them fresh:
+     freshclam
+   Run it before each triage session, or put it on a schedule. Stale
+   definitions produce confident false "clean" results.
+
+3. Make the scripts executable
+     chmod +x ../stage-*/*.sh ../run_triage.sh
+
+4. Test run against something harmless
+     ../stage-2-document/check_document.sh ~/Documents/some-normal.docx
+   Expect INTAKE, IDENTIFICATION, HASH REPUTATION, AV SCAN, ROUTED ANALYSIS
+   sections to scroll past, ending in "DONE. Report: ...".
+
+---------------------------------------------------------------------------
+TROUBLESHOOTING
+---------------------------------------------------------------------------
+
+"LibClamAV Error: cli_loaddbdir: No supported database files found"
+  Definitions were never downloaded.
+    cp "$(brew --prefix)/etc/clamav/freshclam.conf.sample" "$(brew --prefix)/etc/clamav/freshclam.conf"
+    sed -i '' '/^Example/d' "$(brew --prefix)/etc/clamav/freshclam.conf"
+    freshclam
+  Verify:  ls "$(brew --prefix)/var/lib/clamav"
+  Expect main.cvd, daily.cld or daily.cvd, bytecode.cvd.
+
+"olevba: command not found" (or any pip-installed tool)
+  The pip user-scripts directory is not on PATH.
+    ls ~/Library/Python                                  # find your version
+    echo 'export PATH="$HOME/Library/Python/3.x/bin:$PATH"' >> ~/.zprofile
+  Close and reopen Terminal. Substitute your actual version for 3.x.
+
+"error: externally-managed-environment" from pip
+  macOS 13+ with Homebrew Python. The installer already falls back
+  automatically. By hand, either:
+    pip3 install <pkg> --break-system-packages
+  or use a virtual environment:
+    ./install-tools.sh --venv
+
+"vt" errors with an auth or key message
+  The API key is not set. Run `vt init` and paste your key.
+
+VirusTotal step reports "not found" or 404
+  VirusTotal has never seen that hash. Normal for a brand-new or internal
+  document. Not an error, and not a clean bill of health - keep reading the
+  macro and external-link sections of the report.
+
+"ripgrep (rg) not found" in a stage 2 report
+  The external-link scan was skipped, which means the most important check in
+  document triage did not run. The report is not usable as-is.
+    brew install ripgrep
+  Then re-run the document.
+
+"Permission denied" running a script
+    chmod +x <script>
+
+pdfid.py / pdf-parser.py / oledump.py / rtfdump.py not found
+  These are NOT on PyPI. `pip3 install didier-stevens-suite` fails - no such
+  package exists. They are plain Python scripts distributed by git only:
+    git clone https://github.com/DidierStevens/DidierStevensSuite.git ~/tools/DidierStevens
+    chmod +x ~/tools/DidierStevens/*.py
+    echo 'export PATH="$PATH:$HOME/tools/DidierStevens"' >> ~/.zprofile
+  Close and reopen Terminal. install-tools.sh does all of this for you.
+
+  Why it matters: without them, stage 2's PDF branch loses pdfid and
+  pdf-parser (it falls back to a raw byte scan that cannot see inside
+  compressed object streams) and the legacy-OLE branch loses oledump's
+  stream listing. The checks are skipped, not failed, so the report still
+  looks complete.
+
+pcode2code fails with an AttributeError
+  Known incompatibility with some oletools versions. Use pcodedmp output
+  instead; it is enough to detect stomping.
+
+peepdf errors with a jsbeautifier ImportError
+    pip3 install jsbeautifier
+
+ssdeep comparison returns a score of 0
+  Not an error - the files simply are not similar. Fall back to exact
+  SHA-256 or MD5 matching.
+
+"app is damaged and can't be opened" (ImHex, Cutter, other casks)
+  Gatekeeper. Right-click the app > Open, once, then it runs normally.
+
+A stage script exits immediately with a usage message
+  It was given no argument, or a path that does not exist. Quote paths that
+  contain spaces.
+
+---------------------------------------------------------------------------
+LINUX
+---------------------------------------------------------------------------
+The stage scripts hash portably through ../lib/common.sh (sha256sum or
+shasum, md5sum or md5), so the chain runs on Linux. Install the equivalents:
+
+  apt install ripgrep whois libimage-exiftool-perl clamav poppler-utils \
+              mupdf-tools qpdf zbar-tools binwalk yara ssdeep dnstwist
+  pip3 install oletools checkdmarc urlextract mail-parser tld \
+               XLMMacroDeobfuscator msoffcrypto-tool pcodedmp
+
+  git clone https://github.com/DidierStevens/DidierStevensSuite.git ~/tools/DidierStevens
+  chmod +x ~/tools/DidierStevens/*.py
+  echo 'export PATH="$PATH:$HOME/tools/DidierStevens"' >> ~/.bashrc
+
+xattr is macOS-only; the provenance check is skipped and the script says so.
+vt-cli is available from https://github.com/VirusTotal/vt-cli/releases.
+
+---------------------------------------------------------------------------
+OPERATING RULES
+---------------------------------------------------------------------------
+- Run triage from a non-privileged account. The scripts only read the sample.
+- Keep samples in a local, non-synced folder. Not iCloud, not Dropbox, not a
+  network share - a malicious file should not replicate itself across your
+  devices because of where you put it.
+- Static analysis is safe to run directly on macOS. Detonation is not:
+  modules/detonation-lab/.
+- Do not submit a confidential document to VirusTotal or any public sandbox.
+  Hash lookups are fine; uploads are a data-loss event.
+- Monitor host network activity while doing anything dynamic - Little Snitch
+  or LuLu.
+
+REFERENCES
+----------
+  ClamAV                 https://docs.clamav.net
+  oletools               https://github.com/decalage2/oletools
+  VirusTotal CLI         https://github.com/VirusTotal/vt-cli
+  ripgrep                https://github.com/BurntSushi/ripgrep
+  Didier Stevens Suite   https://github.com/DidierStevens/DidierStevensSuite
+  dnstwist               https://github.com/elceef/dnstwist
+  REMnux                 https://remnux.org
+
+Review this file after any tool upgrade or macOS major version upgrade.

@@ -1,0 +1,187 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 16 ENTERPRISE
+SECURITY HARDENING
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter describes how to harden a WireGuard deployment against
+common threats by securing the operating system, protecting keys,
+enforcing least privilege, and implementing monitoring and change
+control.
+
+===============================================================================
+2. THREAT MODEL
+===============================================================================
+
+Protect against:
+
+-   Stolen administrator laptops
+-   Compromised VPN credentials
+-   Unauthorized configuration changes
+-   Internet scanning
+-   Lateral movement after compromise
+-   Insider threats
+
+Assume a client device may eventually be compromised and limit its
+access.
+
+===============================================================================
+3. HOST HARDENING
+===============================================================================
+
+Recommendations
+
+-   Keep the operating system patched.
+-   Disable unnecessary services.
+-   Enable automatic security updates where appropriate.
+-   Restrict SSH access.
+-   Use host-based firewalls.
+-   Synchronize time using NTP.
+
+Useful commands
+
+systemctl list-unit-files –state=enabled ss -tulpn journalctl -p
+warning..alert
+
+===============================================================================
+4. PRIVATE KEY PROTECTION
+===============================================================================
+
+Store keys only under:
+
+/etc/wireguard
+
+Permissions
+
+chmod 600 /etc/wireguard/private.key chmod 600 /etc/wireguard/*.conf
+
+Never:
+
+-   Email private keys
+-   Store them in shared folders
+-   Commit them to Git
+-   Embed them in scripts
+
+===============================================================================
+5. FIREWALL HARDENING
+===============================================================================
+
+Default policy
+
+INPUT DROP FORWARD DROP OUTPUT ACCEPT
+
+Allow only:
+
+-   UDP 51820
+-   SSH from management networks
+-   Monitoring traffic
+-   Required application ports
+
+Review counters regularly.
+
+===============================================================================
+6. LEAST-PRIVILEGE ACCESS
+===============================================================================
+
+Grant access only to required networks.
+
+Example
+
+Administrator 10.60.40.0/24
+
+Backup Server 10.60.30.0/24
+
+Do not advertise unnecessary prefixes in AllowedIPs.
+
+===============================================================================
+7. MULTI-FACTOR AUTHENTICATION
+===============================================================================
+
+WireGuard itself does not provide MFA.
+
+Common enterprise approaches
+
+-   MFA before VPN configuration distribution
+-   Identity-aware access portals
+-   MFA-protected bastion hosts
+-   SSO combined with device management
+
+===============================================================================
+8. LOGGING AND AUDITING
+===============================================================================
+
+Collect
+
+-   WireGuard service logs
+-   Firewall logs
+-   Authentication logs
+-   Configuration changes
+-   System updates
+
+Forward logs to a SIEM such as Graylog.
+
+Useful commands
+
+journalctl -u wg-quick@wg0 wg show iptables -L -n -v
+
+===============================================================================
+9. CONFIGURATION MANAGEMENT
+===============================================================================
+
+Keep all configuration under version control.
+
+Recommended
+
+-   Git
+-   Ansible
+-   Puppet
+-   Salt
+-   Configuration review process
+
+Avoid editing production servers manually whenever possible.
+
+===============================================================================
+10. INCIDENT RESPONSE
+===============================================================================
+
+If a VPN device is compromised
+
+1.  Remove the peer.
+2.  Rotate keys.
+3.  Audit firewall rules.
+4.  Review logs.
+5.  Validate remaining peers.
+6.  Restore access only after remediation.
+
+===============================================================================
+11. SECURITY CHECKLIST
+===============================================================================
+
+Daily
+
+[ ] Review alerts [ ] Review handshake status
+
+Weekly
+
+[ ] Review firewall counters [ ] Review logs
+
+Monthly
+
+[ ] Audit peers [ ] Verify backups [ ] Review AllowedIPs [ ] Test key
+rotation
+
+===============================================================================
+12. BEST PRACTICES
+===============================================================================
+
+-   Patch regularly.
+-   Rotate keys.
+-   Use least privilege.
+-   Monitor continuously.
+-   Test disaster recovery.
+-   Encrypt backups.
+-   Document every security change.
+-   Review VPN access quarterly.
+
+END OF CHAPTER 16

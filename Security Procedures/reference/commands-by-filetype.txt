@@ -1,0 +1,300 @@
+COMMAND REFERENCE, BY ARTEFACT TYPE
+Part of: URL & Document Triage (see ../WORKFLOW.txt)
+Last reviewed: 2026-09-04
+
+WHAT THIS IS
+------------
+A lookup table, not a procedure. When you have a thing in front of you and
+need the command, it is here, grouped by what the thing is. The procedures in
+triage/stage-*/procedure.txt tell you the order and the reasoning; this file
+tells you the syntax.
+
+Placeholders: <file> <url> <host> <id> <n> <ip>
+
+===========================================================================
+URL / HOSTNAME
+===========================================================================
+Decode                python3 -c "from urllib.parse import unquote; print(unquote('<url>'))"
+Punycode/IDN          python3 -c "print('<host>'.encode().decode('idna'))"
+Forward DNS           dig +short A <host>
+Reverse DNS           dig +short -x <ip>
+All records           dig +short ANY <host>
+WHOIS                 whois <host>
+Creation date only    whois <host> | grep -i 'creat'
+IP ownership + abuse  whois <ip> | grep -Ei 'orgname|netname|country|abuse'
+Redirect chain        curl -sIL --max-redirs 10 "<url>"
+Headers only          curl -sI "<url>"
+Final URL only        curl -sIL -o /dev/null -w '%{url_effective}\n' "<url>"
+Fetch body (no exec)  curl -s -o page.html "<url>"
+TLS certificate       echo | openssl s_client -connect <host>:443 -servername <host> 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+Full TLS audit        testssl <host>
+CT log siblings       curl -s "https://crt.sh/?q=%25.<host>&output=json"
+Typosquats of a brand dnstwist --registered <brand>.com
+Is this a typosquat   dnstwist --registered <brand>.com | grep <host>
+Defang for a ticket   sed 's/\./[.]/g; s|://|[://]|g' urls.txt
+
+Web lookups (manual)
+  VirusTotal       https://www.virustotal.com/gui/search/<host>
+  urlscan.io       https://urlscan.io/search/#<host>
+  Safe Browsing    https://transparencyreport.google.com/safe-browsing/search?url=<host>
+  PhishTank        https://www.phishtank.com/
+  Talos            https://talosintelligence.com/reputation_center
+  AbuseIPDB        https://www.abuseipdb.com/check/<ip>
+  MXToolbox        https://mxtoolbox.com/blacklists.aspx
+  Unshorten        https://unshorten.it  /  https://checkshorturl.com
+
+===========================================================================
+EMAIL (.eml)
+===========================================================================
+All headers           python3 -c "import email,sys;m=email.message_from_file(open(sys.argv[1],errors='ignore'));[print(f'{k}: {v}') for k,v in m.items()]" <file>
+Parse everything      mailparser -f <file>
+Auth records          checkdmarc <domain>
+SPF (raw)             dig +short TXT <domain>
+DMARC policy          dig +short TXT _dmarc.<domain>
+DKIM selector         dig +short TXT <selector>._domainkey.<domain>
+Extract attachments   python3 -c "import email,sys,os;m=email.message_from_file(open(sys.argv[1],errors='ignore'));[open(p.get_filename(),'wb').write(p.get_payload(decode=True)) for p in m.walk() if p.get_content_disposition()=='attachment' and p.get_filename()]" <file>
+Extract URLs          see triage/stage-0-intake/extract_email.sh, step 5
+
+.msg is a different container. Export as .eml from Outlook first.
+
+Header analysis web tools
+  Google              https://toolbox.googleapps.com/apps/messageheader/
+  MXToolbox           https://mxtoolbox.com/EmailHeaders.aspx
+  Sender reputation   https://emailrep.io/<sender@domain>
+
+===========================================================================
+ANY FILE - IDENTIFY FIRST
+===========================================================================
+Real type             file <file>
+Type, terse           file -b <file>
+Hashes                shasum -a 256 <file>   /   md5 -q <file>
+                      sha256sum <file>       # Linux
+Metadata              exiftool <file>
+Metadata to CSV       exiftool -csv *.doc > metadata.csv
+Provenance (macOS)    xattr -l <file>
+Lock against change   chflags uchg <file>
+Fuzzy hash            ssdeep <file>
+Compare to known bad  ssdeep -m known_bad.hash <file>
+Hidden/appended data  binwalk <file>
+Extract everything    binwalk -Me <file>
+Readable strings      strings <file> | less
+Obfuscated strings    floss <file>
+YARA match            yara -s rules.yar <file>
+YARA recursive        yara -r rules/ ./samples/
+
+Real type disagreeing with the extension is a finding, not a nuisance.
+
+===========================================================================
+OOXML  (.docx .xlsx .pptx .docm .xlsm .pptm)
+===========================================================================
+List contents         unzip -l <file>
+Unpack                unzip -q <file> -d ./unpacked
+List via zipdump      zipdump.py <file>
+Pretty-print one part zipdump.py <file> -s <n> -d | xmldump.py pretty
+
+Macros
+  Scan                olevba --decode <file>
+  Reveal obfuscation  olevba --reveal <file>
+  Excel sheets too    olevba <file> --excel
+  Macro present?      find ./unpacked -name vbaProject.bin
+  P-code (stomping)   pcodedmp -d <file>
+  Decompile p-code    pcode2code <file>
+  Emulate VBA         vmonkey <file>   /   vmonkey --iocs <file>
+  Excel 4 / XLM       xlmdeobfuscator --file <file>
+  XLM, cell format    xlmdeobfuscator --file <file> --output-formula-format CELL
+  Strip protection    dotnet run --project ~/tools/EvilClippy -- -uu <file>
+
+External references - the checks that matter most
+  External targets    rg 'TargetMode="External"' ./unpacked
+  Remote template     rg 'attachedTemplate' ./unpacked
+  URLs and UNC        rg 'http://|https://|ftp://|\\\\' ./unpacked
+  DDE fields          rg -i 'DDEAUTO' ./unpacked
+  Remote formulas     rg -i 'WEBSERVICE|HYPERLINK\(|externalLink' ./unpacked
+  Relationship files  find ./unpacked -name "*.rels"
+  Auto-update flags   rg -i 'updateFields|linkedToFile' ./unpacked/word/settings.xml
+  Odd content types   cat ./unpacked/\[Content_Types\].xml
+
+Embedded objects      find ./unpacked -path "*embeddings*" -type f
+Identify them         file ./unpacked/word/embeddings/*
+
+Encrypted
+  Excel default key   msoffcrypto-tool <file> out.xlsm -p VelvetSweatshop
+  Empty password      msoffcrypto-tool <file> out.docm -p ""
+  Known password      msoffcrypto-tool <file> out.docm -p <password>
+
+===========================================================================
+LEGACY OLE2  (.doc .xls .ppt)
+===========================================================================
+List streams          oledump.py <file>          # M = contains VBA
+Stream detail         oledump.py <file> -i
+Extract VBA source    oledump.py <file> -s <n> -v
+URL heuristics        oledump.py <file> -p plugin_http_heuristics
+Embedded objects      oleobj <file>
+DDE fields            msodde <file>
+Macros                olevba --decode <file>
+Directory structure   oledir <file>
+Stream timestamps     oletimes <file>
+Document metadata     olemeta <file>
+Browse interactively  olebrowse <file>
+Quick ID check        oleid <file>
+
+SRP streams sometimes cache an earlier version of the VBA. If oledump shows
+more macro streams than olevba reports, read them directly.
+
+===========================================================================
+PDF
+===========================================================================
+Risky tag triage      pdfid.py <file> -n
+All tags              pdfid.py <file>
+Structure             pdf-parser.py <file> -a
+Include object streams pdf-parser.py <file> -a -O
+One object            pdf-parser.py <file> -o <id>
+Decode its stream     pdf-parser.py <file> -o <id> -d
+What references it    pdf-parser.py <file> -r <id>
+Interactive shell     peepdf -fl <file>      # then: tree, object <id>, js
+Document info         mutool info <file>
+Show one object       mutool show <file> <id>
+Extract embedded      mutool extract <file>
+Normalise/decompress  mutool clean <file> out.pdf
+Decrypt (empty pw)    qpdf --password="" --decrypt <file> out.pdf
+Decrypt (known pw)    qpdf --password=<pw> --decrypt <file> out.pdf
+Check for encryption  qpdf --check <file>
+Text and links        pdftotext -layout <file> - | grep -Eo 'https?://[^ ]+'
+YARA the streams      mutool extract <file> && yara rules/ extracted_*
+
+Tags to escalate on, and what each means
+  /OpenAction /AA     script or action runs automatically on open
+  /JavaScript /JS     JavaScript the reader will execute
+  /AcroForm /XFA      forms that can specify JavaScript
+  /Launch             can launch a program or open another document
+  /EmbeddedFile       carries another file inside
+  /URI                accesses a resource by URL
+  /SubmitForm /GoToR  can send data to a URL
+  /GoTo               changes view to a destination in this or another PDF
+  /RichMedia          can embed Flash
+  /ObjStm             object stream - can hide any of the above
+  /XObject            can embed an image (phishing lure)
+
+Names can be hex-escaped to evade a keyword scan: /J#61vaScript is
+/JavaScript. If pdfid looks clean but the file arrived unexpectedly, read the
+structure with pdf-parser anyway.
+
+Full triage one-liner
+  pdfid.py <file> -n && pdf-parser.py <file> -a && exiftool <file>
+
+===========================================================================
+RTF
+===========================================================================
+Embedded objects      rtfobj <file>
+Group listing         rtfdump.py <file>
+Object groups only    rtfdump.py <file> -O
+Extract one object    rtfdump.py <file> -s <n> -H -d > obj.bin
+Identify it           file obj.bin
+Its OLE streams       oledump.py obj.bin -i
+XOR-encoded PE        python3 ~/tools/DidierStevens/xorsearch.py -W obj.bin
+Carve it              binwalk obj.bin
+YARA                  yara rules/ <file>
+
+RTF supports no macros. It carries files as OLE1 objects and is the standard
+vehicle for Office parser exploits - CVE-2017-11882 (Equation Editor) above
+all. An Equation, OLE2Link, or Package object is the exploit shape. An MZ
+header at a non-zero offset inside an extracted object is a hidden PE.
+
+===========================================================================
+HTML
+===========================================================================
+Links                 grep -Eo 'href="[^"]+"' page.html
+Meta-refresh          grep -Ei '<meta[^>]+refresh' page.html
+JS redirect           grep -Eo '(window\.)?location(\.href)?[[:space:]]*=' page.html
+Smuggling indicators  grep -iE 'atob|fromCharCode|msSaveBlob|new Blob|unescape\(' page.html
+Password field        grep -iE '<input[^>]+type=.?password' page.html
+Extract base64 blobs  python3 -c "
+import base64,re,sys
+h=open(sys.argv[1]).read()
+for i,b in enumerate(re.findall(r'[A-Za-z0-9+/]{100,}={0,2}',h)):
+    try:
+        open(f'smuggled_{i}.bin','wb').write(base64.b64decode(b))
+        print('smuggled_%d.bin'%i)
+    except Exception: pass
+" page.html
+Then identify them    file smuggled_*.bin
+
+curl -L follows HTTP 3xx only. Meta-refresh and JavaScript redirects are
+invisible to it - grep for them explicitly.
+
+===========================================================================
+IMAGE (QR code / quishing)
+===========================================================================
+Decode QR             zbarimg <file>
+Raw payload only      zbarimg --raw -q <file>
+Metadata              exiftool <file>
+
+A QR code is a URL. Decode it, then run it through stage 1 like any link.
+
+===========================================================================
+JAVASCRIPT (extracted from a PDF, HTML, or archive)
+===========================================================================
+Beautify              python3 -c "import jsbeautifier,sys;print(jsbeautifier.beautify(open(sys.argv[1]).read()))" <file> > pretty.js
+Sandboxed analysis    box-js <file> --output-dir results/
+  results/urls.json     URLs it tried to contact
+  results/payload.*     files it tried to drop
+  results/analysis.log  full execution trace
+Instrument eval       echo 'var _e=eval; eval=function(x){print("[EVAL] "+x); return _e(x);};' > instr.js && cat pretty.js >> instr.js && js instr.js
+Decode by hand        CyberChef: https://gchq.github.io/CyberChef
+                      typical recipe: From Base64 > XOR > Inflate > From Charcode
+
+Red flags: eval chains, fromCharCode, long hex blobs, ActiveXObject,
+WScript.Shell.Run.
+
+===========================================================================
+SHELLCODE / EXTRACTED BINARY
+===========================================================================
+Emulate (x86)         speakeasy -t <file> -r -a x86
+Emulate (x64)         speakeasy -t <file> -r -a x64
+Dump allocated stage  speakeasy -t <file> -r -a x86 --dumpmem 0x<addr> stage2.bin
+Find IOCs in trace    speakeasy -t <file> -r -a x86 | grep -E "(http|cmd|powershell)"
+Disassemble           python3 -c "
+from capstone import *
+md=Cs(CS_ARCH_X86,CS_MODE_32)
+for i in md.disasm(open('<file>','rb').read(),0x1000):
+    print('0x%x:\t%s\t%s'%(i.address,i.mnemonic,i.op_str))" | head -80
+XOR-encoded search    xorsearch -W -d 3 <file>
+Deobfuscated strings  floss <file>
+Base64 blobs          base64dump.py <file>
+Decode one            base64dump.py <file> -e bu -s <n> -d > decoded.bin
+Numeric arrays        numbers-to-string.py <file>
+
+API calls that tell you what it does: VirtualAlloc (second stage),
+LoadLibrary/GetProcAddress (API resolution), InternetOpen/HttpOpenRequest/
+connect (C2), CreateProcess/WinExec/ShellExecute (execution).
+
+This is past the boundary of triage. If you are here, the verdict is already
+malicious - work in the lab: ../modules/detonation-lab/.
+
+===========================================================================
+CONTAINERS THIS TOOLKIT DOES NOT ROUTE YET
+===========================================================================
+.lnk, .iso/.img/.vhd, .chm, .xll, .one (OneNote), and password-protected
+archives are all current delivery wrappers with no branch in stage 2.
+Treat them as samples for the lab, not as documents. Starting points:
+
+Archive listing       unzip -l <file>   /   7z l <file>
+Archive with password unzip -P <pw> <file> -d unzipped/
+Then identify         file unzipped/*
+Disk image (macOS)    hdiutil attach -nobrowse -readonly <file>
+                      # inspect, then: hdiutil detach /Volumes/<name>
+Anything else         binwalk -Me <file>
+
+===========================================================================
+FILE-TYPE ROUTING SUMMARY
+===========================================================================
+  .docx .xlsx .pptx .docm .xlsm .pptm  -> OOXML section
+  .doc .xls .ppt                        -> Legacy OLE2 section
+  .pdf                                  -> PDF section
+  .rtf                                  -> RTF section
+  .html .htm                            -> HTML section
+  .png .jpg .gif .svg                   -> Image / QR section
+  .js .vbs .wsf .hta                    -> JavaScript section
+  extracted .bin / shellcode            -> Shellcode section
+  .lnk .iso .img .vhd .chm .xll .one    -> not routed; treat as a sample
+  .exe .dmg .pkg .zip .rar .7z          -> not a document; detonation lab

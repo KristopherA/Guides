@@ -1,0 +1,217 @@
+STAGE 1 - URL ANALYSIS
+Part of: URL & Document Triage (see ../../WORKFLOW.txt)
+Companion script: analyze_url.sh (automates steps 1-13)
+Last reviewed: 2026-09-04
+
+PURPOSE
+-------
+Determine where a URL actually leads and what is waiting there, without
+visiting it in a browser. Steps 1-13 below are what the script does. Steps
+14-16 are yours.
+
+RULE #1: Never click the link. Copy it as text - right-click > Copy Link
+Address, or take it from the raw message source. Clicking it from a
+production machine ends the investigation and starts an incident.
+
+RUNNING IT
+----------
+  ./analyze_url.sh "https://suspicious.example/path" 2
+
+  Second argument is recursion depth: how many hops of "link inside a page
+  or document" to follow. 0 = this URL only. 2 is the sane default; 3 for a
+  chain you already know is deep.
+
+  CASE_DIR=~/ir-cases/CASE-001 ./analyze_url.sh "<url>" 2
+      keeps output with the rest of the case
+
+  BRAND_DOMAIN=microsoft.com ./analyze_url.sh "<url>" 2
+      turns on the automatic typosquat comparison in step 4
+
+  TRIAGE_FETCH=no-touch ./analyze_url.sh "<url>" 2
+      sends NOTHING to the target host. DNS, WHOIS and crt.sh still run,
+      because those query registries and public logs rather than the
+      attacker's server. Steps 6, 7, 8 and 10 are suppressed and recorded
+      as incomplete, so the case cannot close clean on their silence.
+
+      Use it when tipping off the operator costs more than the missing
+      headers - a live campaign you are still mapping, or a kit that
+      retires a URL the moment it sees a scanner. Get the redirect chain
+      from urlscan.io instead, which fetches from their infrastructure.
+
+  TRIAGE_FETCH=offline ./analyze_url.sh "<url>" 0
+      no network at all. Decode and record only.
+
+  TRIAGE_UA="MyOrg-Scanner/1.0" ./analyze_url.sh "<url>"
+      the default user agent is a plausible browser, deliberately. A UA
+      that says "scanner" tells any kit that logs user agents that an
+      analyst is looking, after which it can serve your IP clean content
+      indefinitely. Override this only if your organisation requires
+      scanners to be identifiable.
+
+PROCEDURE
+---------
+
+1. Decode the URL
+   Percent-encoding, nested redirect parameters, and base64 blobs in the
+   query string all exist to keep a reader from seeing the destination.
+     python3 -c "from urllib.parse import unquote; print(unquote('<url>'))"
+   Encoding is not proof of malice - plenty of legitimate systems encode. It
+   is a reason to read the decoded form before judging anything.
+
+2. Decode punycode / IDN hostnames
+   An "xn--" hostname renders as non-Latin characters that pass a visual
+   check - Cyrillic 'a' for Latin 'a'.
+     python3 -c "print('xn--pple-43d.com'.encode().decode('idna'))"
+   Compare the decoded Unicode form against the real brand, character by
+   character.
+
+3. Resolve DNS, forward and reverse
+     dig +short A <hostname>
+     dig +short -x <ip>
+   Reverse DNS tells you whose infrastructure it is: a brand's login page
+   resolving into a consumer VPS provider is a mismatch worth noting.
+
+4. WHOIS - domain age above all
+     whois <hostname>
+   Registration inside the last 30 days is one of the strongest single
+   phishing signals there is. Also check:
+     - privacy-protected registrant (harder to attribute, common but noted)
+     - a registrar inconsistent with the brand being claimed
+   Then compare the hostname against the legitimate domain by eye, and
+   automatically if you know the brand:
+     dnstwist --registered microsoft.com | grep <suspicious-host>
+   Watch for: rn/m, 0/o, l/I, added hyphens, and the brand demoted to a
+   subdomain - microsoft.com.login-verify.co is the domain login-verify.co.
+
+5. Query Certificate Transparency logs
+   crt.sh lists every TLS certificate ever issued for a domain and usually
+   exposes the rest of the campaign - sibling names issued the same day.
+     curl -s "https://crt.sh/?q=%25.suspicious-domain.com&output=json"
+   Add the siblings to the case. Blocking one host of twelve accomplishes
+   little.
+
+6. Trace the redirect chain, headers only
+     curl -sIL --max-redirs 10 "<url>"
+   Read each Location: line. Outlook Safe Links, shorteners, and marketing
+   trackers all wrap the real destination here. No page is fetched or
+   rendered by this.
+
+7. Pull the response headers of the final destination
+     curl -sI "<final-url>"
+   The Content-Type is what decides step 10 - what kind of thing is actually
+   being served.
+
+8. Inspect the TLS certificate
+     echo | openssl s_client -connect <host>:443 -servername <host> 2>/dev/null \
+       | openssl x509 -noout -subject -issuer -dates
+   A valid certificate means the connection is encrypted. It says nothing
+   about who is on the other end; domain-validated certificates are free and
+   issued in seconds. Certificate age close to domain age reinforces step 4.
+   For a full TLS posture audit: testssl <host>
+
+9. Check reputation - OSINT, manual or by API
+     VirusTotal:     https://www.virustotal.com/gui/search/<host>
+     urlscan.io:     https://urlscan.io/search/#<host>
+     Safe Browsing:  https://transparencyreport.google.com/safe-browsing/search?url=<host>
+     PhishTank:      https://www.phishtank.com/
+     Talos:          https://talosintelligence.com/reputation_center
+   Check urlscan.io specifically. It records what the page looked like from
+   its own vantage point, which is how you catch cloaking - a kit that
+   serves a clean page to scanners and the payload to real targets. One
+   fetch from one IP does not settle the question.
+
+10. Follow the nesting, by content type
+    The first URL is rarely the payload. What to do with each type:
+
+    HTML      Fetch the source and look for what curl will not follow:
+                grep -Eo 'href="[^"]+"' page.html
+                meta-refresh:  <meta http-equiv="refresh" content="0;url=...">
+                JS redirect:   window.location = "..."  /  location.href = "..."
+              curl -L follows HTTP 3xx only, so both of the above are
+              invisible to step 6. Treat any target found as a new URL and
+              re-run this procedure on it.
+              Also check for HTML smuggling - a payload carried in the page
+              as a base64 blob and written to disk by script:
+                grep -iE 'atob|fromCharCode|msSaveBlob|new Blob' page.html
+              And for a password field, which makes the intent explicit.
+
+    PDF       Extract text links, then hand the file to stage 2 - a PDF's
+              real risk is /OpenAction, /JavaScript, /Launch, and embedded
+              files, none of which are links:
+                pdftotext -layout file.pdf - | grep -Eo 'https?://[^ ]+'
+                ../stage-2-document/check_document.sh file.pdf
+
+    Office    Do not treat it as text. Hand it to stage 2:
+                ../stage-2-document/check_document.sh file.docx
+              analyze_url.sh does this automatically, then reads back stage
+              2's CHAIN::EXTERNAL_URL:: lines and queues them here.
+
+    Image     A QR code is a link (quishing). Decode it:
+                zbarimg qr-image.png
+
+    Anything else - an archive, an installer, a script - is a sample, not a
+    link. Stop here and take it to modules/detonation-lab/.
+
+    Re-run steps 1-9 against every newly found URL. Cap the depth at 2-3
+    and track visited URLs so a loop cannot run away.
+
+11. Hash everything you downloaded
+      shasum -a 256 downloaded_file.pdf
+    So the same artefact can be matched later against another case or a
+    threat feed without fetching it again.
+
+12. Record what each hop was, not just the last one
+    A chain of five hosts is five indicators. The wrapper that redirected is
+    as blockable as the landing page.
+
+13. Defang before it leaves the toolkit
+      hxxps://bad[.]example[.]com
+    Every URL that goes into a ticket, a chat message, or an email should be
+    defanged so nobody downstream clicks it by reflex. The script does this
+    automatically; lib/common.sh has defang()/refang() if you need it
+    directly.
+
+14. Detonate, if behaviour is what you still need
+    Only in an isolated sandbox: urlscan.io live scan, ANY.RUN, Joe Sandbox,
+    Hybrid Analysis, or a disposable VM with no route to production. Never
+    in a browser on a real machine. See modules/detonation-lab/.
+
+15. Cross-check the results you cannot get from one fetch
+    See WHAT THIS STAGE DOES NOT DO below. Cloaking and JS-built links are
+    the two that most often change a verdict.
+
+16. Score, decide, and act
+    -> ../stage-3-verdict/procedure.txt
+
+WHAT THIS STAGE DOES NOT DO
+----------------------------
+- Cloaking. A single fetch from one IP with one user agent may see a
+  different page than a victim would. Cross-check with urlscan.io.
+- Fully JS-rendered pages. Links assembled at runtime beyond the simple
+  assignments in step 10 need a sandboxed headless browser.
+- Archives. A link may deliver a password-protected zip whose contents are
+  the real payload. Extract in isolation first.
+- Geofencing and device targeting. Some kits only serve the payload to a
+  particular country or a mobile user agent.
+- Authenticated destinations. A SharePoint or Drive link may need a login
+  before it shows anything, and that login is often the phish.
+- Threat-feed cross-reference. PhishTank, OpenPhish, and Abuse.ch are manual
+  lookups here; there is no automated "already reported" check.
+- Proving safety. A clean result narrows risk. Nothing here can prove a URL
+  is safe.
+
+CHAIN MARKERS
+-------------
+Consumes: CHAIN::EXTRACTED_URL::  (stage 0)
+          CHAIN::EXTERNAL_URL::   (stage 2, fed back for recursion)
+Emits:    CHAIN::SAVED_DOC::      a document downloaded from a URL -> stage 2
+          CHAIN::FILE_SHA256::    hash of anything downloaded    -> stage 3
+          CHAIN::FLAG::<weight>:: a red flag with its weight     -> stage 3
+          CHAIN::FLAG::incomplete:: a check that did NOT run  -> stage 3
+          CHAIN::REPORT_PATH::    where this stage's report went -> stage 3
+
+TIME BUDGET
+-----------
+One URL, steps 1-9      2-5 minutes (script: under a minute)
+Full chain at depth 2   5-15 minutes
+Sandbox detonation      15-30 minutes including report review

@@ -1,0 +1,1714 @@
+AGM WI-FI SURVEY SENSOR
+Raspberry Pi 3 Model B v1.2 + WiFi Explorer Pro
+Setup Guide and Field Procedure
+============================================================
+
+PURPOSE
+=======
+
+This guide describes how to build and use a Raspberry Pi 3 Model B v1.2
+as a fixed Wi-Fi survey and monitoring sensor for an AGM or similar event.
+
+The Raspberry Pi is NOT intended to replace WiFi Explorer Pro.
+
+Use the tools together:
+
+  Raspberry Pi sensor
+    - Fixed observation point
+    - Long-duration passive Wi-Fi monitoring
+    - Timestamped RF observations
+    - Active connectivity tests on an authorized AGM WLAN
+    - Evidence for troubleshooting incidents after the event
+
+  Mac + WiFi Explorer Pro
+    - Walking survey
+    - Detailed interactive RF analysis
+    - Coverage checks at defined survey points
+    - 6 GHz analysis when supported by the Mac
+    - Immediate investigation when a Pi sensor detects a problem
+
+The Pi 3 built-in Wi-Fi is 2.4 GHz only. For a useful AGM survey, use
+supported external USB Wi-Fi adapters for passive 2.4/5 GHz monitoring
+and active client testing.
+
+This guide intentionally excludes active wireless attack techniques such
+as deauthentication, impersonation, credential capture, or disruption.
+Use passive monitoring and normal client connectivity testing only on
+networks you are authorized to assess.
+
+
+============================================================
+1. RECOMMENDED SENSOR DESIGN
+============================================================
+
+Recommended layout:
+
+                         AGM Wi-Fi
+
+                    AP1 )))  AP2 )))
+                        \     /
+                         \   /
+                     +-----------+
+                     | Delegates |
+                     +-----------+
+
+                         RF
+
+                    +-------------+
+                    | Raspberry Pi|
+                    | Survey Node |
+                    +-------------+
+                      |    |    |
+                      |    |    +-- USB Wi-Fi #2
+                      |    |        Active client tests
+                      |    |
+                      |    +------- USB Wi-Fi #1
+                      |             Passive/Kismet
+                      |
+                      +------------ Ethernet
+                                    Management/upload
+
+MacBook:
+  WiFi Explorer Pro
+  Walking survey and detailed investigation
+
+
+Recommended interface roles:
+
+  eth0
+    Management access to the Pi.
+
+  wlan0
+    Pi built-in 2.4 GHz Wi-Fi.
+    Leave unused, disable, or retain as an emergency management interface.
+
+  wlan1
+    USB adapter with Linux monitor-mode support.
+    Used by Kismet for passive monitoring.
+
+  wlan2
+    USB adapter used as a normal client.
+    Connected to the AGM Wi-Fi for active health tests.
+
+
+============================================================
+2. HARDWARE
+============================================================
+
+Required:
+
+  Raspberry Pi 3 Model B v1.2
+  Reliable 5 V / 2.5 A power supply
+  High-quality microSD card, 32 GB or larger
+  Ethernet cable
+  Mac running WiFi Explorer Pro
+
+Strongly recommended:
+
+  USB Wi-Fi adapter #1
+    Must support Linux monitor mode.
+    Prefer a chipset with well-supported in-kernel Linux drivers.
+
+  USB Wi-Fi adapter #2
+    Used as a normal Wi-Fi client.
+    Dual-band 2.4/5 GHz preferred.
+
+Optional:
+
+  USB Ethernet adapter
+  USB-powered hub
+  Small USB SSD for lengthy packet/log retention
+  Short USB extension cables to physically separate Wi-Fi adapters
+  Second or third Raspberry Pi sensor for additional venue locations
+
+
+IMPORTANT:
+
+Do not purchase a USB Wi-Fi adapter based only on marketing terms such as
+"AC1200" or "Wi-Fi 6."
+
+Verify:
+
+  - Exact chipset
+  - Linux kernel driver
+  - Monitor-mode support
+  - 2.4 GHz support
+  - 5 GHz support
+  - ARM64 compatibility
+
+6 GHz monitoring should be performed with a modern supported survey device,
+such as the Mac running WiFi Explorer Pro. Do not make the Pi 3 the
+authoritative 6 GHz survey platform.
+
+
+============================================================
+3. SENSOR LOCATION PLAN
+============================================================
+
+Assign stable survey-point IDs before the event.
+
+Example:
+
+  A01 - Registration desk
+  A02 - Registration lineup
+  A03 - Main hall entrance
+  A04 - Main hall front
+  A05 - Main hall centre
+  A06 - Main hall rear
+  A07 - Stage
+  A08 - Breakout room 1
+  A09 - Breakout room 2
+  A10 - Staff workspace
+
+Pi sensor names should identify their location.
+
+Examples:
+
+  agm-wifi-a01
+  agm-wifi-a05
+  agm-wifi-a10
+
+For repeatability, record the physical location of each sensor.
+
+Example:
+
+  A05
+  Main hall centre
+  North side of centre aisle
+  Table height
+  Approximately 1.2 metres above floor
+
+
+============================================================
+4. INSTALL RASPBERRY PI OS
+============================================================
+
+Use Raspberry Pi OS Lite 64-bit when supported by the current Raspberry Pi
+OS release.
+
+During imaging:
+
+  Set hostname:
+    agm-wifi-a05
+
+  Create an administrative user.
+
+  Enable SSH.
+
+  Configure locale and timezone.
+
+Set your local timezone, for example:
+
+  America/New_York
+
+Connect the Pi by Ethernet before continuing.
+
+
+============================================================
+5. INITIAL OPERATING SYSTEM SETUP
+============================================================
+
+Log in:
+
+  ssh ADMINUSER@agm-wifi-a05
+
+Update the OS:
+
+  sudo apt update
+  sudo apt full-upgrade -y
+  sudo reboot
+
+Reconnect after reboot.
+
+Verify time:
+
+  timedatectl
+
+Set timezone if necessary:
+
+  sudo timedatectl set-timezone America/New_York
+
+Verify:
+
+  timedatectl
+
+
+============================================================
+6. INSTALL BASE UTILITIES
+============================================================
+
+Run:
+
+  sudo apt update
+
+  sudo apt install -y \
+    iw \
+    wireless-tools \
+    rfkill \
+    tcpdump \
+    tshark \
+    iproute2 \
+    iputils-ping \
+    dnsutils \
+    curl \
+    jq \
+    sqlite3 \
+    rsync \
+    ethtool \
+    mtr-tiny \
+    traceroute \
+    vnstat \
+    chrony \
+    git
+
+Verify:
+
+  iw dev
+
+  ip -br link
+
+  rfkill list
+
+
+============================================================
+7. IDENTIFY THE WI-FI ADAPTERS
+============================================================
+
+Connect the passive USB Wi-Fi adapter.
+
+Run:
+
+  lsusb
+
+  iw dev
+
+  ip -br link
+
+Record:
+
+  Interface name
+  USB chipset
+  Driver
+
+Determine driver:
+
+  ethtool -i wlan1
+
+Replace wlan1 with the actual interface name.
+
+Connect the second USB Wi-Fi adapter and repeat.
+
+Example target:
+
+  wlan1 = passive monitoring
+  wlan2 = active AGM Wi-Fi client
+
+
+============================================================
+8. PREVENT INTERFACE NAME CONFUSION
+============================================================
+
+Record MAC addresses:
+
+  ip -br link
+
+For each adapter:
+
+  cat /sys/class/net/wlan1/address
+  cat /sys/class/net/wlan2/address
+
+Record these values in the survey notes.
+
+Example:
+
+  PASSIVE_MONITOR_MAC=aa:bb:cc:dd:ee:01
+  ACTIVE_CLIENT_MAC=aa:bb:cc:dd:ee:02
+
+Always verify interface assignments after a reboot:
+
+  iw dev
+  ip -br link
+
+
+============================================================
+9. TEST MONITOR MODE
+============================================================
+
+Do this before the AGM.
+
+Stop NetworkManager from trying to manage the passive interface if
+NetworkManager is present:
+
+  sudo nmcli device set wlan1 managed no
+
+Check:
+
+  nmcli device status
+
+Bring down the interface:
+
+  sudo ip link set wlan1 down
+
+Set monitor mode:
+
+  sudo iw dev wlan1 set type monitor
+
+Bring it back up:
+
+  sudo ip link set wlan1 up
+
+Verify:
+
+  iw dev wlan1 info
+
+Expected:
+
+  type monitor
+
+Test passive reception:
+
+  sudo tcpdump -i wlan1 -c 20
+
+Restore managed mode if required:
+
+  sudo ip link set wlan1 down
+  sudo iw dev wlan1 set type managed
+  sudo ip link set wlan1 up
+
+If monitor mode fails, investigate the USB adapter chipset and driver.
+
+
+============================================================
+10. INSTALL KISMET
+============================================================
+
+Prefer a current packaged Kismet build rather than compiling Kismet on a
+Raspberry Pi 3.
+
+Kismet explicitly notes that modern C++ compilation can be too resource
+intensive for a Raspberry Pi 3.
+
+First try the Raspberry Pi OS/Debian repository:
+
+  sudo apt update
+  sudo apt install -y kismet
+
+Check:
+
+  kismet --version
+
+If the distribution version is old, use the Kismet package repository that
+matches the exact Debian/Raspberry Pi OS base release.
+
+Do NOT mix repositories intended for different Debian releases.
+
+Kismet current documentation:
+
+  https://www.kismetwireless.net/docs/
+  https://www.kismetwireless.net/packages/
+
+Add the administrative user to the Kismet group:
+
+  sudo usermod -aG kismet ADMINUSER
+
+Reboot:
+
+  sudo reboot
+
+After reconnecting:
+
+  groups
+
+Confirm "kismet" appears in the group list.
+
+
+============================================================
+11. CREATE KISMET DATA DIRECTORY
+============================================================
+
+Create a dedicated location:
+
+  sudo mkdir -p /var/log/agm-wifi/kismet
+
+Set ownership:
+
+  sudo chown -R ADMINUSER:kismet /var/log/agm-wifi
+
+Set permissions:
+
+  sudo chmod 2750 /var/log/agm-wifi
+  sudo chmod 2750 /var/log/agm-wifi/kismet
+
+
+============================================================
+12. INITIAL KISMET TEST
+============================================================
+
+Verify the passive adapter:
+
+  iw dev
+
+Start Kismet manually for the first test:
+
+  kismet -c wlan1
+
+Open the Kismet web interface from an authorized management workstation.
+
+Default Kismet web service commonly listens on:
+
+  http://PI-IP-ADDRESS:2501
+
+Determine the Pi Ethernet IP:
+
+  hostname -I
+
+On first access, configure the Kismet web-interface credentials.
+
+Confirm:
+
+  - wlan1 is detected
+  - packets are being received
+  - access points are appearing
+  - expected AGM/test SSIDs can be seen
+  - 2.4/5 GHz bands expected from the adapter are visible
+
+Stop the test with Ctrl+C.
+
+
+============================================================
+13. KISMET CONFIGURATION
+============================================================
+
+Configuration paths may vary by package version.
+
+Locate them:
+
+  kismet --help | head -50
+
+  find /etc -maxdepth 2 -iname '*kismet*' -print 2>/dev/null
+
+Common locations include:
+
+  /etc/kismet/kismet.conf
+  /etc/kismet/kismet_site.conf
+
+Prefer site/local configuration files so package upgrades do not overwrite
+custom settings.
+
+Create a survey-specific configuration if supported by the installed
+version.
+
+Important configuration goals:
+
+  - Capture source = passive USB Wi-Fi adapter
+  - Web UI accessible only from the authorized management network
+  - Log files written to /var/log/agm-wifi/kismet
+  - Automatic startup
+  - Log rotation/retention planned before the event
+
+Do not expose the Kismet web interface to an untrusted conference WLAN.
+
+
+============================================================
+14. ACTIVE WI-FI CLIENT
+============================================================
+
+The second USB adapter should connect normally to the AGM WLAN.
+
+This interface is not placed in monitor mode.
+
+Example with NetworkManager:
+
+  sudo nmcli radio wifi on
+
+List interfaces:
+
+  nmcli device status
+
+List available WLANs:
+
+  nmcli device wifi list ifname wlan2
+
+Connect:
+
+  sudo nmcli device wifi connect "AGM-SSID" \
+    password "WIFI-PASSWORD" \
+    ifname wlan2
+
+IMPORTANT:
+
+Do not place Wi-Fi passwords directly into long-lived shell scripts or
+survey reports.
+
+For enterprise 802.1X Wi-Fi, configure the connection using the
+organization's approved credentials and authentication method.
+
+Verify:
+
+  nmcli connection show --active
+
+  ip addr show wlan2
+
+  ip route
+
+Test:
+
+  ping -c 4 GATEWAY-IP
+
+  dig example.com
+
+  curl -I https://example.com
+
+
+============================================================
+15. ACTIVE HEALTH TEST SCRIPT
+============================================================
+
+Create:
+
+  sudo mkdir -p /opt/agm-wifi
+  sudo mkdir -p /var/log/agm-wifi/health
+
+Create the script:
+
+  sudo nano /opt/agm-wifi/wifi-health.sh
+
+Paste:
+
+------------------------------------------------------------
+#!/bin/bash
+
+set -u
+
+INTERFACE="${INTERFACE:-wlan2}"
+TARGET="${TARGET:-1.1.1.1}"
+DNS_NAME="${DNS_NAME:-example.com}"
+HTTP_URL="${HTTP_URL:-https://example.com}"
+LOG_DIR="${LOG_DIR:-/var/log/agm-wifi/health}"
+
+mkdir -p "$LOG_DIR"
+
+DATESTAMP="$(date '+%Y-%m-%d')"
+TIMESTAMP="$(date --iso-8601=seconds)"
+LOGFILE="$LOG_DIR/wifi-health-$DATESTAMP.csv"
+
+if [ ! -f "$LOGFILE" ]; then
+    echo "timestamp,interface,ssid,bssid,signal_dbm,frequency_mhz,ip_address,gateway,ping_loss_percent,ping_avg_ms,dns_seconds,http_seconds,http_code" > "$LOGFILE"
+fi
+
+SSID="$(iw dev "$INTERFACE" link 2>/dev/null | awk -F': ' '/SSID:/ {print $2; exit}')"
+BSSID="$(iw dev "$INTERFACE" link 2>/dev/null | awk '/Connected to/ {print $3; exit}')"
+SIGNAL="$(iw dev "$INTERFACE" link 2>/dev/null | awk '/signal:/ {print $2; exit}')"
+FREQ="$(iw dev "$INTERFACE" link 2>/dev/null | awk '/freq:/ {print $2; exit}')"
+
+IPADDR="$(ip -4 -o addr show dev "$INTERFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+GATEWAY="$(ip route 2>/dev/null | awk -v dev="$INTERFACE" '$1=="default" && $0 ~ dev {print $3; exit}')"
+
+PING_OUTPUT="$(ping -I "$INTERFACE" -c 5 -W 2 "$TARGET" 2>/dev/null || true)"
+
+PING_LOSS="$(printf '%s\n' "$PING_OUTPUT" | awk -F', ' '/packet loss/ {gsub("% packet loss","",$3); print $3}')"
+PING_AVG="$(printf '%s\n' "$PING_OUTPUT" | awk -F'/' '/rtt|round-trip/ {print $5}')"
+
+DNS_TIME="$(curl --interface "$INTERFACE" -o /dev/null -sS \
+    --max-time 10 \
+    -w '%{time_namelookup}' \
+    "https://$DNS_NAME/" 2>/dev/null || echo "FAIL")"
+
+HTTP_RESULT="$(curl --interface "$INTERFACE" -o /dev/null -sS \
+    --max-time 15 \
+    -w '%{time_total},%{http_code}' \
+    "$HTTP_URL" 2>/dev/null || echo "FAIL,000")"
+
+HTTP_TIME="$(printf '%s' "$HTTP_RESULT" | cut -d, -f1)"
+HTTP_CODE="$(printf '%s' "$HTTP_RESULT" | cut -d, -f2)"
+
+echo "$TIMESTAMP,$INTERFACE,$SSID,$BSSID,$SIGNAL,$FREQ,$IPADDR,$GATEWAY,$PING_LOSS,$PING_AVG,$DNS_TIME,$HTTP_TIME,$HTTP_CODE" >> "$LOGFILE"
+------------------------------------------------------------
+
+Make executable:
+
+  sudo chmod 750 /opt/agm-wifi/wifi-health.sh
+
+Set ownership:
+
+  sudo chown root:kismet /opt/agm-wifi/wifi-health.sh
+
+Test:
+
+  sudo INTERFACE=wlan2 /opt/agm-wifi/wifi-health.sh
+
+Inspect:
+
+  sudo tail -5 /var/log/agm-wifi/health/wifi-health-$(date '+%Y-%m-%d').csv
+
+
+============================================================
+16. CREATE SYSTEMD HEALTH TEST SERVICE
+============================================================
+
+Create:
+
+  sudo nano /etc/systemd/system/agm-wifi-health.service
+
+Paste:
+
+------------------------------------------------------------
+[Unit]
+Description=AGM Wi-Fi active health test
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=INTERFACE=wlan2
+Environment=TARGET=1.1.1.1
+Environment=DNS_NAME=example.com
+Environment=HTTP_URL=https://example.com
+ExecStart=/opt/agm-wifi/wifi-health.sh
+------------------------------------------------------------
+
+
+============================================================
+17. CREATE SYSTEMD HEALTH TEST TIMER
+============================================================
+
+Create:
+
+  sudo nano /etc/systemd/system/agm-wifi-health.timer
+
+Paste:
+
+------------------------------------------------------------
+[Unit]
+Description=Run AGM Wi-Fi health test every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+------------------------------------------------------------
+
+Reload:
+
+  sudo systemctl daemon-reload
+
+Enable:
+
+  sudo systemctl enable --now agm-wifi-health.timer
+
+Verify:
+
+  systemctl status agm-wifi-health.timer
+
+  systemctl list-timers --all | grep agm-wifi
+
+Test service manually:
+
+  sudo systemctl start agm-wifi-health.service
+
+View log:
+
+  journalctl -u agm-wifi-health.service -n 20 --no-pager
+
+
+============================================================
+18. LOG DISK USAGE
+============================================================
+
+Check:
+
+  df -h
+
+  du -sh /var/log/agm-wifi
+
+Before every AGM confirm substantial free space exists.
+
+Example:
+
+  df -h /
+
+For long captures, use an external SSD rather than depending on the SD card.
+
+
+============================================================
+19. TIME SYNCHRONIZATION
+============================================================
+
+Accurate timestamps are critical.
+
+Verify chrony:
+
+  systemctl status chrony --no-pager
+
+Check sources:
+
+  chronyc sources -v
+
+Check synchronization:
+
+  chronyc tracking
+
+Verify system time:
+
+  timedatectl
+
+All:
+
+  Pi sensors
+  Mac survey workstation
+  infrastructure logs
+
+should use synchronized time.
+
+This allows user complaints and Wi-Fi events to be correlated accurately.
+
+
+============================================================
+20. PRE-EVENT WI-FI EXPLORER PRO SURVEY
+============================================================
+
+Perform this when the venue is empty or lightly occupied.
+
+Walk every predefined survey location.
+
+At each location record:
+
+  Survey point ID
+  Date/time
+  Expected AGM SSID
+  BSSID
+  Band
+  Channel
+  Channel width
+  RSSI
+  Noise/SNR if available
+  Other APs sharing or overlapping the channel
+  Unexpected SSIDs
+  Notes
+
+Suggested filename:
+
+  AGM-YYYY-WiFiExplorer-PreEvent.csv
+
+Example:
+
+  AGM-2026-WiFiExplorer-PreEvent.csv
+
+Use the same survey locations every year where practical.
+
+
+============================================================
+21. PI SENSOR PRE-EVENT BASELINE
+============================================================
+
+Place each sensor in its final location.
+
+Record:
+
+  Sensor hostname
+  Survey location ID
+  Ethernet IP
+  Passive adapter MAC
+  Active adapter MAC
+  Physical position
+  Power source
+  Deployment time
+
+Verify interfaces:
+
+  ip -br link
+
+Verify passive monitor adapter:
+
+  iw dev
+
+Verify active WLAN:
+
+  iw dev wlan2 link
+
+Verify Internet:
+
+  ping -I wlan2 -c 4 1.1.1.1
+
+Verify DNS:
+
+  dig example.com
+
+Verify Kismet.
+
+Verify timer:
+
+  systemctl list-timers --all | grep agm-wifi
+
+Verify logs:
+
+  ls -lh /var/log/agm-wifi/health
+
+Check free disk:
+
+  df -h
+
+
+============================================================
+22. CREATE A BASELINE SNAPSHOT
+============================================================
+
+Record:
+
+  Date/time
+  AGM SSIDs visible
+  Expected BSSIDs visible
+  Channels
+  Signal levels
+  Competing AP count
+  Active-client IP address
+  Gateway response time
+  DNS test
+  Internet test
+
+Do this:
+
+  - Before delegates arrive
+  - At room setup completion
+  - Immediately before registration opens
+
+
+============================================================
+23. LIVE AGM MONITORING
+============================================================
+
+During the AGM:
+
+  Leave Pi sensors stationary.
+
+  Do not move them unless documenting the move.
+
+  Keep Ethernet management separate from the surveyed Wi-Fi when possible.
+
+  Allow Kismet to continue passive collection.
+
+  Allow active health tests to run continuously.
+
+At major attendance periods perform WiFi Explorer Pro walking surveys:
+
+  - Registration peak
+  - Meeting start
+  - First major break
+  - Lunch
+  - Afternoon peak
+  - Immediately after any reported Wi-Fi incident
+
+
+============================================================
+24. INCIDENT PROCEDURE
+============================================================
+
+When a user reports a Wi-Fi problem:
+
+STEP 1 - RECORD THE EXACT TIME
+
+  Example:
+
+    10:43:17 MDT
+
+STEP 2 - RECORD LOCATION
+
+  Example:
+
+    A05 - Main hall centre
+
+STEP 3 - RECORD SYMPTOM
+
+  Examples:
+
+    Cannot join Wi-Fi
+    Connected but no Internet
+    Very slow
+    Video call failing
+    Website inaccessible
+    Repeated disconnects
+
+STEP 4 - CHECK PI ACTIVE TESTS
+
+  On sensor:
+
+    tail -20 /var/log/agm-wifi/health/wifi-health-$(date '+%Y-%m-%d').csv
+
+Look for:
+
+  Signal change
+  BSSID change
+  Packet loss
+  Gateway reachability
+  DNS latency
+  HTTP latency
+  HTTP failures
+
+STEP 5 - CHECK PASSIVE SENSOR
+
+Use Kismet to examine the same timestamp.
+
+Look for:
+
+  AP disappearance
+  BSSID changes
+  Channel changes
+  Increased nearby AP count
+  Strong competing APs
+  Other unusual RF changes
+
+STEP 6 - USE WIFI EXPLORER PRO
+
+Go to the affected survey point with the Mac.
+
+Record:
+
+  Current AP/BSSID
+  Band
+  Channel
+  Width
+  RSSI
+  SNR/noise where available
+  Co-channel APs
+  Overlapping networks
+
+STEP 7 - TEST NORMAL CLIENT FUNCTIONS
+
+From an authorized client:
+
+  Association
+  DHCP
+  Gateway
+  DNS
+  Internet HTTPS
+
+STEP 8 - CLASSIFY
+
+Possible categories:
+
+  COVERAGE
+    Poor RSSI/SNR.
+
+  RF CONTENTION
+    Good signal but crowded channel or airtime problems.
+
+  AP/RADIO
+    AP/BSSID vanished or changed unexpectedly.
+
+  DHCP
+    Client associates but does not obtain valid network configuration.
+
+  DNS
+    IP connectivity works but name resolution fails or is very slow.
+
+  UPSTREAM
+    WLAN functions but Internet path is degraded.
+
+  APPLICATION
+    Network tests are healthy but a particular application fails.
+
+  UNKNOWN
+    Insufficient evidence.
+
+STEP 9 - DOCUMENT ACTION
+
+Examples:
+
+  Venue contacted
+  AP restarted by venue
+  Channel changed
+  Upstream issue escalated
+  No infrastructure change made
+  Continued monitoring
+
+
+============================================================
+25. INCIDENT TIMELINE TEMPLATE
+============================================================
+
+Copy this for each incident:
+
+------------------------------------------------------------
+AGM WI-FI INCIDENT
+
+Incident ID:
+Date:
+Reported time:
+Resolved time:
+
+Location:
+Survey point:
+
+Reported by:
+
+Symptom:
+
+Affected SSID:
+
+Client device:
+
+Pi sensor:
+
+Pi signal at incident:
+
+Pi BSSID at incident:
+
+Pi packet loss:
+
+Pi gateway latency:
+
+Pi DNS latency:
+
+Pi HTTP latency:
+
+Kismet observations:
+
+WiFi Explorer Pro observations:
+
+Infrastructure observations:
+
+Probable category:
+
+Action taken:
+
+Result:
+
+Notes:
+------------------------------------------------------------
+
+
+============================================================
+26. INTERPRETING COMMON RESULTS
+============================================================
+
+CASE 1:
+
+  RSSI: good
+  Gateway latency: poor
+  Packet loss: high
+
+Likely areas:
+
+  Wi-Fi contention
+  AP/client capacity
+  RF interference
+  WLAN infrastructure
+
+
+CASE 2:
+
+  RSSI: poor
+  Packet loss: high
+
+Likely area:
+
+  Coverage or local RF conditions
+
+
+CASE 3:
+
+  RSSI: good
+  Gateway: good
+  DNS: poor
+
+Likely area:
+
+  DNS
+
+
+CASE 4:
+
+  RSSI: good
+  Gateway: good
+  DNS: good
+  Internet: poor
+
+Likely areas:
+
+  Internet uplink
+  firewall/proxy
+  upstream congestion
+
+
+CASE 5:
+
+  Expected BSSID disappears from Kismet
+
+Likely areas:
+
+  AP reboot
+  radio restart
+  AP failure
+  configuration change
+
+
+CASE 6:
+
+  BSSID changes but service remains healthy
+
+Possibilities:
+
+  Normal roaming
+  AP steering
+  WLAN controller behavior
+
+Do not treat every BSSID change as a fault.
+
+
+============================================================
+27. POST-EVENT DATA COLLECTION
+============================================================
+
+Stop making configuration changes before collecting evidence.
+
+Create archive directory:
+
+  sudo mkdir -p /var/tmp/agm-wifi-export
+
+Copy health logs:
+
+  sudo cp -a /var/log/agm-wifi/health \
+    /var/tmp/agm-wifi-export/
+
+Copy Kismet logs:
+
+  sudo cp -a /var/log/agm-wifi/kismet \
+    /var/tmp/agm-wifi-export/
+
+Capture system information:
+
+  hostname > /var/tmp/agm-wifi-export/hostname.txt
+
+  date --iso-8601=seconds > /var/tmp/agm-wifi-export/export-time.txt
+
+  uname -a > /var/tmp/agm-wifi-export/uname.txt
+
+  ip -br addr > /var/tmp/agm-wifi-export/ip-addresses.txt
+
+  iw dev > /var/tmp/agm-wifi-export/iw-dev.txt
+
+  lsusb > /var/tmp/agm-wifi-export/lsusb.txt
+
+  chronyc tracking > /var/tmp/agm-wifi-export/chrony-tracking.txt
+
+Create archive:
+
+  cd /var/tmp
+
+  sudo tar -czf agm-wifi-$(hostname)-$(date '+%Y%m%d').tar.gz \
+    agm-wifi-export
+
+Verify:
+
+  ls -lh /var/tmp/agm-wifi-*.tar.gz
+
+
+============================================================
+28. COPY DATA TO ADMIN WORKSTATION
+============================================================
+
+From the Mac:
+
+  scp ADMINUSER@PI-IP:/var/tmp/agm-wifi-*.tar.gz .
+
+Alternatively:
+
+  rsync -av \
+    ADMINUSER@PI-IP:/var/tmp/agm-wifi-export/ \
+    ./agm-wifi-export/
+
+Verify the files before deleting anything from the Pi.
+
+
+============================================================
+29. POST-EVENT ANALYSIS
+============================================================
+
+Correlate:
+
+  User complaint times
+  Help-desk records
+  Pi health CSV
+  Kismet observations
+  WiFi Explorer Pro surveys
+  Venue/controller logs
+  DHCP logs
+  DNS logs
+  firewall logs
+  Internet/uplink monitoring
+
+Build a timeline.
+
+Example:
+
+  10:42
+    Complaints begin in main hall.
+
+  10:43
+    RSSI remains -57 dBm.
+
+  10:43
+    Packet loss increases from 0% to 23%.
+
+  10:44
+    Gateway latency increases to 430 ms.
+
+  10:45
+    Kismet still sees AGM AP normally.
+
+  10:46
+    WiFi Explorer Pro shows heavy co-channel activity.
+
+Interpretation:
+
+  Coverage remained adequate.
+  Problem was more consistent with contention/capacity than weak signal.
+
+
+============================================================
+30. FINAL AGM WI-FI REPORT
+============================================================
+
+Recommended sections:
+
+  1. Executive summary
+
+  2. Venue and WLAN description
+
+  3. Survey methodology
+
+  4. Survey locations
+
+  5. Pre-event baseline
+
+  6. Peak attendance observations
+
+  7. Incident timeline
+
+  8. Coverage observations
+
+  9. Channel/RF observations
+
+ 10. Active connectivity results
+
+ 11. Root-cause findings
+
+ 12. Recommendations
+
+ 13. Changes required before next AGM
+
+
+============================================================
+31. RECOMMENDED METRICS
+============================================================
+
+Do not rely on a single RSSI threshold.
+
+Collect trends.
+
+Useful metrics:
+
+  RSSI
+  BSSID
+  Channel
+  Frequency
+  AP visibility
+  Packet loss
+  Gateway latency
+  DNS time
+  HTTPS response time
+
+Useful warning indicators:
+
+  Expected AP disappears
+  Signal changes sharply at a fixed sensor
+  Sustained packet loss
+  Large increase in gateway latency
+  DNS failures
+  HTTPS failures
+  BSSID/channel changes during incidents
+
+Fixed sensors are especially valuable for detecting CHANGE.
+
+
+============================================================
+32. WHAT THE PI CANNOT PROVE
+============================================================
+
+A fixed Pi sensor does not replace:
+
+  Professional predictive RF design
+  Dedicated spectrum analysis
+  WLAN controller telemetry
+  Client experience telemetry
+  Wi-Fi 6E/7 6 GHz surveying
+  Walking coverage surveys
+
+Kismet observations show what the sensor can receive at its location.
+
+They do not automatically prove:
+
+  Channel utilization
+  airtime fairness
+  AP CPU load
+  controller load
+  client count
+  DHCP exhaustion
+  WAN saturation
+
+Correlate multiple data sources before assigning root cause.
+
+
+============================================================
+33. MULTIPLE SENSOR DEPLOYMENT
+============================================================
+
+For a large AGM:
+
+  Sensor 1:
+    Registration
+
+  Sensor 2:
+    Main hall centre
+
+  Sensor 3:
+    Staff/production area
+
+All sensors should:
+
+  Use synchronized clocks
+  Use consistent naming
+  Use identical logging intervals
+  Use the same software version where practical
+
+Example:
+
+  agm-wifi-a01
+  agm-wifi-a05
+  agm-wifi-a10
+
+
+============================================================
+34. PRE-EVENT CHECKLIST
+============================================================
+
+[ ] Pi boots normally
+
+[ ] Ethernet works
+
+[ ] SSH works
+
+[ ] Correct hostname
+
+[ ] Correct timezone
+
+[ ] Chrony synchronized
+
+[ ] Passive USB adapter detected
+
+[ ] Monitor mode tested
+
+[ ] Active USB adapter detected
+
+[ ] AGM WLAN connection tested
+
+[ ] Kismet starts
+
+[ ] Kismet sees expected APs
+
+[ ] Health-test timer runs
+
+[ ] CSV files are populated
+
+[ ] Disk space checked
+
+[ ] WiFi Explorer Pro updated/tested
+
+[ ] Survey-point list prepared
+
+[ ] Venue WLAN information documented
+
+[ ] Expected SSIDs documented
+
+[ ] Expected BSSIDs documented when available
+
+[ ] Power supplies packed
+
+[ ] Ethernet cables packed
+
+[ ] USB extension cables packed
+
+[ ] Spare SD card packed
+
+
+============================================================
+35. ON-SITE DEPLOYMENT CHECKLIST
+============================================================
+
+[ ] Position Pi
+
+[ ] Record exact physical location
+
+[ ] Connect Ethernet
+
+[ ] Connect passive USB radio
+
+[ ] Connect active USB radio
+
+[ ] Connect power
+
+[ ] Verify time
+
+[ ] Verify Kismet
+
+[ ] Verify active WLAN
+
+[ ] Verify health logging
+
+[ ] Record baseline
+
+[ ] Photograph sensor placement if appropriate
+
+[ ] Begin WiFi Explorer Pro baseline survey
+
+
+============================================================
+36. END-OF-DAY CHECKLIST
+============================================================
+
+[ ] Record end time
+
+[ ] Verify sensor still synchronized
+
+[ ] Check disk usage
+
+[ ] Confirm logs exist
+
+[ ] Export/copy important logs
+
+[ ] Record unresolved incidents
+
+[ ] Record infrastructure changes made during the day
+
+[ ] Do not erase sensor logs
+
+
+============================================================
+37. POST-AGM CHECKLIST
+============================================================
+
+[ ] Export all Pi logs
+
+[ ] Export WiFi Explorer Pro results
+
+[ ] Export relevant infrastructure logs
+
+[ ] Verify timestamps/timezones
+
+[ ] Build incident timeline
+
+[ ] Identify recurring problem locations
+
+[ ] Separate coverage problems from capacity/upstream problems
+
+[ ] Write recommendations
+
+[ ] Archive raw survey data
+
+[ ] Archive final report
+
+[ ] Securely remove temporary WLAN credentials from sensors
+
+
+============================================================
+38. REMOVE AGM WLAN CREDENTIALS
+============================================================
+
+List NetworkManager connections:
+
+  nmcli connection show
+
+Remove the temporary AGM connection:
+
+  sudo nmcli connection delete "AGM-SSID"
+
+Verify:
+
+  nmcli connection show
+
+If a dedicated credential file was created, remove it securely according
+to organizational policy.
+
+Do not include Wi-Fi passwords in the final survey report.
+
+
+============================================================
+39. TROUBLESHOOTING
+============================================================
+
+PROBLEM:
+
+  USB adapter missing.
+
+CHECK:
+
+  lsusb
+  dmesg | tail -100
+  iw dev
+  ip -br link
+
+
+PROBLEM:
+
+  Monitor mode cannot be enabled.
+
+CHECK:
+
+  ethtool -i wlan1
+  iw list
+  rfkill list
+
+Confirm the chipset/driver supports monitor mode.
+
+
+PROBLEM:
+
+  Kismet sees no devices.
+
+CHECK:
+
+  iw dev
+  rfkill list
+  ip link show wlan1
+  Kismet datasource status
+
+
+PROBLEM:
+
+  Active adapter connects but traffic uses Ethernet.
+
+This is normal if Ethernet has the preferred default route.
+
+The health script binds tests to wlan2 so Wi-Fi testing is still performed
+through the active wireless adapter.
+
+
+PROBLEM:
+
+  Pi reboots or USB adapters disconnect.
+
+Possible cause:
+
+  Power supply or USB current limitation.
+
+Use:
+
+  Reliable Raspberry Pi power supply
+  Powered USB hub if required
+
+
+PROBLEM:
+
+  Timestamps differ between devices.
+
+CHECK:
+
+  timedatectl
+  chronyc tracking
+  chronyc sources -v
+
+
+============================================================
+40. RECOMMENDED FIELD WORKFLOW
+============================================================
+
+The overall procedure should be:
+
+  1. Build Pi sensor.
+
+  2. Test both USB Wi-Fi adapters.
+
+  3. Test Kismet.
+
+  4. Test active client measurements.
+
+  5. Define survey locations.
+
+  6. Arrive before delegates.
+
+  7. Deploy fixed Pi sensors.
+
+  8. Verify synchronized clocks.
+
+  9. Perform WiFi Explorer Pro empty-room survey.
+
+ 10. Capture Pi baseline.
+
+ 11. Monitor through registration.
+
+ 12. Perform walking survey at attendance peaks.
+
+ 13. Timestamp all complaints.
+
+ 14. Correlate complaints with fixed sensor data.
+
+ 15. Investigate affected location with WiFi Explorer Pro.
+
+ 16. Record infrastructure actions.
+
+ 17. Export all logs after the event.
+
+ 18. Correlate Pi, Mac and infrastructure data.
+
+ 19. Produce AGM Wi-Fi findings and recommendations.
+
+ 20. Remove temporary WLAN credentials from sensors.
+
+
+============================================================
+41. DESIGN PHILOSOPHY
+============================================================
+
+Use WiFi Explorer Pro to answer:
+
+  "What does the Wi-Fi environment look like HERE, NOW?"
+
+Use the Raspberry Pi to answer:
+
+  "What changed at this location over TIME?"
+
+Use infrastructure monitoring to answer:
+
+  "What was the WLAN/network infrastructure doing?"
+
+Use the incident timeline to combine all three.
+
+That combination is substantially more useful than an occasional
+walk-through survey alone.
+
+
+============================================================
+42. SOURCE NOTES
+============================================================
+
+Kismet installation documentation:
+
+  https://www.kismetwireless.net/docs/readme/installing/linux/
+
+Kismet package documentation:
+
+  https://www.kismetwireless.net/packages/
+
+Kismet documentation recommends using current packages where possible and
+notes that modern Kismet compilation can be too resource intensive for a
+Raspberry Pi 3. It also recommends limiting privileged operation to the
+capture helpers rather than running the entire Kismet process as root.
+
+Before deploying at an AGM, verify the exact Kismet repository and package
+instructions for the Raspberry Pi OS/Debian release installed on the Pi.
+
+END OF GUIDE

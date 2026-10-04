@@ -1,0 +1,263 @@
+Ready-to-Run Malware Intake Pipeline Script
+===========================================
+
+Purpose
+-------
+This is a defensive pipeline template. It performs safe intake tasks:
+
+- accepts a local sample file
+- calculates hashes
+- creates an analysis job directory
+- records metadata
+- copies the sample into controlled storage
+- creates a notes template
+- creates a placeholder for sandbox results
+- creates a placeholder for YARA output
+
+It does not detonate malware.
+
+File: malware_intake_pipeline.sh
+--------------------------------
+
+cat > malware_intake_pipeline.sh <<'EOF_SCRIPT'
+#!/bin/sh
+set -eu
+
+usage() {
+  echo "Usage: $0 /path/to/sample [source_label]"
+  exit 1
+}
+
+if [ "${1:-}" = "" ]; then
+  usage
+fi
+
+SAMPLE_PATH="$1"
+SOURCE_LABEL="${2:-manual}"
+
+if [ ! -f "$SAMPLE_PATH" ]; then
+  echo "Error: sample file not found: $SAMPLE_PATH" >&2
+  exit 1
+fi
+
+command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum required" >&2; exit 1; }
+command -v sha1sum >/dev/null 2>&1 || { echo "sha1sum required" >&2; exit 1; }
+command -v md5sum >/dev/null 2>&1 || { echo "md5sum required" >&2; exit 1; }
+command -v file >/dev/null 2>&1 || { echo "file required" >&2; exit 1; }
+
+BASE_DIR="${MALWARE_LAB_DIR:-$PWD/malware-lab-data}"
+SAMPLE_STORE="$BASE_DIR/samples"
+JOB_STORE="$BASE_DIR/jobs"
+RULE_STORE="$BASE_DIR/rules"
+REPORT_STORE="$BASE_DIR/reports"
+
+mkdir -p "$SAMPLE_STORE" "$JOB_STORE" "$RULE_STORE" "$REPORT_STORE"
+
+SHA256="$(sha256sum "$SAMPLE_PATH" | awk '{print $1}')"
+SHA1="$(sha1sum "$SAMPLE_PATH" | awk '{print $1}')"
+MD5="$(md5sum "$SAMPLE_PATH" | awk '{print $1}')"
+NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+JOB_ID="${NOW_UTC}_${SHA256}"
+JOB_DIR="$JOB_STORE/$JOB_ID"
+SAMPLE_DIR="$SAMPLE_STORE/$SHA256"
+
+mkdir -p "$JOB_DIR" "$SAMPLE_DIR"
+
+cp "$SAMPLE_PATH" "$SAMPLE_DIR/original_sample.bin"
+FILE_TYPE="$(file -b "$SAMPLE_PATH" | sed 's/"/'"'"'/g')"
+SIZE_BYTES="$(wc -c < "$SAMPLE_PATH" | tr -d ' ')"
+
+cat > "$JOB_DIR/metadata.json" <<EOF_JSON
+{
+  "job_id": "$JOB_ID",
+  "created_utc": "$NOW_UTC",
+  "source_label": "$SOURCE_LABEL",
+  "original_path": "$SAMPLE_PATH",
+  "stored_sample": "$SAMPLE_DIR/original_sample.bin",
+  "sha256": "$SHA256",
+  "sha1": "$SHA1",
+  "md5": "$MD5",
+  "size_bytes": $SIZE_BYTES,
+  "file_type": "$FILE_TYPE",
+  "status": "intake_complete"
+}
+EOF_JSON
+
+cat > "$JOB_DIR/analysis_notes.txt" <<EOF_NOTES
+Malware Analysis Notes
+======================
+
+Job ID: $JOB_ID
+Created UTC: $NOW_UTC
+Source: $SOURCE_LABEL
+SHA256: $SHA256
+SHA1: $SHA1
+MD5: $MD5
+Size: $SIZE_BYTES bytes
+File type: $FILE_TYPE
+
+Initial questions
+-----------------
+
+1. What malware family is suspected?
+2. Is the sample packed?
+3. Does it require command-line arguments?
+4. Does it require a specific OS or architecture?
+5. What behavior was observed in sandbox triage?
+
+Static observations
+-------------------
+
+- Strings:
+- Imports:
+- Sections:
+- Suspicious paths:
+- Suspicious commands:
+
+Dynamic observations
+--------------------
+
+- Process tree:
+- Network:
+- DNS:
+- Dropped files:
+- Persistence:
+- Defense evasion:
+
+IOCs
+----
+
+Hashes:
+- $SHA256
+
+Domains:
+-
+
+IP addresses:
+-
+
+URLs:
+-
+
+Files:
+-
+
+Registry keys:
+-
+
+Detection content
+-----------------
+
+YARA:
+-
+
+Sigma:
+-
+
+SIEM query:
+-
+
+EOF_NOTES
+
+mkdir -p "$JOB_DIR/sandbox" "$JOB_DIR/unpacked" "$JOB_DIR/yara" "$JOB_DIR/pcap" "$JOB_DIR/logs" "$JOB_DIR/report"
+
+cat > "$JOB_DIR/yara/${SHA256}.yar" <<EOF_YARA
+rule MALWARE_${SHA256}
+{
+    meta:
+        description = "Candidate rule placeholder - review before use"
+        author = "analyst"
+        date = "$NOW_UTC"
+        sha256 = "$SHA256"
+        source = "$SOURCE_LABEL"
+        confidence = "low"
+
+    strings:
+        // Add reviewed strings here.
+        // Do not use generic strings.
+
+    condition:
+        false
+}
+EOF_YARA
+
+cat > "$JOB_DIR/report/report.txt" <<EOF_REPORT
+Malware Analysis Report
+=======================
+
+Executive summary
+-----------------
+Pending analysis.
+
+Sample metadata
+---------------
+SHA256: $SHA256
+SHA1: $SHA1
+MD5: $MD5
+Size: $SIZE_BYTES bytes
+File type: $FILE_TYPE
+Source: $SOURCE_LABEL
+Created UTC: $NOW_UTC
+
+Behavioral summary
+------------------
+Pending analysis.
+
+Network indicators
+------------------
+Pending analysis.
+
+Host indicators
+---------------
+Pending analysis.
+
+Detection recommendations
+-------------------------
+Pending analysis.
+
+EOF_REPORT
+
+echo "Intake complete"
+echo "Job directory: $JOB_DIR"
+echo "Stored sample: $SAMPLE_DIR/original_sample.bin"
+echo "Metadata: $JOB_DIR/metadata.json"
+EOF_SCRIPT
+
+chmod 755 malware_intake_pipeline.sh
+
+Usage
+-----
+
+./malware_intake_pipeline.sh /path/to/sample.bin MalwareBazaar
+
+Optional environment variable
+-----------------------------
+
+MALWARE_LAB_DIR=/analysis/lab-data ./malware_intake_pipeline.sh /path/to/sample.bin MalwareBazaar
+
+Suggested next automation hooks
+-------------------------------
+
+1. MalwareBazaar API pull stage
+   - Pull recent hashes or tags.
+   - Download into intake queue.
+   - Pass each sample into malware_intake_pipeline.sh.
+
+2. ANY.RUN enrichment stage
+   - Submit sample manually or by approved API workflow.
+   - Attach exported behavior report to job directory.
+
+3. UnpacMe enrichment stage
+   - Submit packed sample.
+   - Store unpacked payload under job_dir/unpacked/.
+   - Add unpacked hash to metadata.
+
+4. yarGen stage
+   - Run yarGen against selected malicious artifact folders.
+   - Store candidate rules under job_dir/yara/.
+   - Require analyst review before production use.
+
+5. Report stage
+   - Merge metadata, sandbox results, IOCs, and detection content.
+   - Output final report.txt or report.md.
+

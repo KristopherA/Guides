@@ -1,0 +1,165 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 23 DOCKER
+INTEGRATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter covers deploying WireGuard in Docker for lab, development,
+and production environments. Topics include container networking,
+persistent storage, security, monitoring, and troubleshooting.
+
+===============================================================================
+2. WHEN TO USE DOCKER
+===============================================================================
+
+Recommended
+
+-   Home labs
+-   Development
+-   Test environments
+-   Small production deployments
+-   Container platforms
+
+Consider a native installation when the VPN gateway is mission critical
+or requires advanced networking features.
+
+===============================================================================
+3. HOST REQUIREMENTS
+===============================================================================
+
+Linux kernel with WireGuard support
+
+Verify
+
+modprobe wireguard lsmod | grep wireguard
+
+Enable IP forwarding
+
+sysctl -w net.ipv4.ip_forward=1 sysctl -w net.ipv6.conf.all.forwarding=1
+
+===============================================================================
+4. DOCKER COMPOSE EXAMPLE
+===============================================================================
+
+services: wireguard: image: lscr.io/linuxserver/wireguard
+container_name: wireguard network_mode: host cap_add: - NET_ADMIN -
+SYS_MODULE volumes: - ./config:/config - /lib/modules:/lib/modules:ro
+restart: unless-stopped
+
+Host networking avoids additional NAT and simplifies routing.
+
+===============================================================================
+5. PERSISTENT STORAGE
+===============================================================================
+
+Persist
+
+/config /etc/wireguard Peer database Configuration templates
+
+Back up persistent volumes regularly.
+
+===============================================================================
+6. NETWORKING MODES
+===============================================================================
+
+Host
+
+Pros - Best performance - Simple routing - Easy firewall integration
+
+Bridge
+
+Pros - Isolation
+
+Cons - Additional NAT - More complex routing
+
+Macvlan
+
+Useful when the container requires its own IP address.
+
+===============================================================================
+7. SECURITY
+===============================================================================
+
+Recommendations
+
+-   Use trusted images.
+-   Pin image versions.
+-   Limit Linux capabilities.
+-   Protect mounted configuration files.
+-   Scan images for vulnerabilities.
+-   Update images regularly.
+
+===============================================================================
+8. MONITORING
+===============================================================================
+
+Container
+
+docker ps docker logs wireguard docker stats wireguard
+
+Inside container
+
+wg show ip addr ip route
+
+Host
+
+journalctl ss -lunp | grep 51820
+
+===============================================================================
+9. UPDATES
+===============================================================================
+
+Typical workflow
+
+docker compose pull docker compose up -d
+
+Verify
+
+docker ps wg show
+
+Roll back by redeploying the previous tagged image if necessary.
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Container will not start
+
+-   Missing kernel module
+-   Incorrect capabilities
+-   Invalid volume mount
+
+Tunnel active but no traffic
+
+-   Host firewall
+-   Missing forwarding
+-   Incorrect routing
+-   Docker network conflict
+
+DNS failures
+
+-   Verify container resolver
+-   Verify upstream DNS
+-   Test with dig
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Use host networking for gateways.
+-   Store compose files in Git.
+-   Keep configuration outside the container.
+-   Use tagged images instead of latest.
+-   Monitor container health.
+-   Back up volumes before upgrades.
+
+===============================================================================
+12. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] Host kernel supports WireGuard [ ] Compose validated [ ] Persistent
+volumes configured [ ] Firewall tested [ ] IP forwarding enabled [ ]
+Monitoring configured [ ] Backups verified [ ] Documentation updated
+
+END OF CHAPTER 23

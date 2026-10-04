@@ -1,0 +1,170 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 6 ROUTING
+FUNDAMENTALS
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+Understanding Linux routing is essential to deploying WireGuard
+successfully. Most “WireGuard problems” are actually routing problems.
+
+===============================================================================
+2. HOW WIREGUARD USES ROUTES
+===============================================================================
+
+WireGuard encrypts traffic after the Linux kernel determines the route.
+
+Application | Routing Table | WireGuard Interface (wg0) | Encryption |
+Internet
+
+If the route is wrong, the packet never reaches WireGuard.
+
+===============================================================================
+3. AllowedIPs
+===============================================================================
+
+AllowedIPs has two purposes:
+
+1.  Defines which destinations are routed through a peer.
+2.  Defines which source prefixes are accepted from that peer.
+
+Example
+
+AllowedIPs = 10.60.10.0/24,10.60.20.0/24
+
+Avoid overly broad entries unless intentionally creating a full tunnel.
+
+===============================================================================
+4. VIEWING ROUTES
+===============================================================================
+
+Show all routes
+
+ip route
+
+Show interface routes
+
+ip route show dev wg0
+
+Test routing
+
+ip route get 10.60.10.15
+
+Expected
+
+10.60.10.15 dev wg0 src 10.100.0.25
+
+===============================================================================
+5. STATIC ROUTES
+===============================================================================
+
+Example
+
+ip route add 10.60.50.0/24 via 10.60.1.1
+
+Persistent routes should be managed through your network configuration
+framework, not added manually after every boot.
+
+===============================================================================
+6. MULTIPLE SUBNETS
+===============================================================================
+
+VPN Clients 10.100.0.0/24 Servers 10.60.10.0/24 Storage 10.60.20.0/24
+Management 10.60.30.0/24 DMZ 10.60.40.0/24
+
+Only advertise networks users actually require.
+
+===============================================================================
+7. ASYMMETRIC ROUTING
+===============================================================================
+
+Problem
+
+Client —> Server
+
+Response returns through another gateway.
+
+Symptoms
+
+-   Ping fails intermittently
+-   TCP sessions reset
+-   One-way communication
+
+Verify
+
+traceroute tcpdump ip route
+
+===============================================================================
+8. REVERSE PATH FILTERING
+===============================================================================
+
+Check
+
+sysctl net.ipv4.conf.all.rp_filter
+
+Temporarily disable
+
+sysctl -w net.ipv4.conf.all.rp_filter=0
+
+Persistent
+
+echo “net.ipv4.conf.all.rp_filter=0” >> /etc/sysctl.conf
+
+Only disable after understanding the security implications.
+
+===============================================================================
+9. ROUTE TROUBLESHOOTING
+===============================================================================
+
+Verify interface
+
+ip addr show wg0
+
+Verify routes
+
+ip route
+
+Verify forwarding
+
+sysctl net.ipv4.ip_forward
+
+Verify peer
+
+wg
+
+Capture traffic
+
+tcpdump -ni wg0
+
+===============================================================================
+10. COMMON MISTAKES
+===============================================================================
+
+-   Overlapping AllowedIPs
+-   Missing return route
+-   IP forwarding disabled
+-   Wrong default gateway
+-   Firewall blocking forwarded traffic
+-   NAT where routing is preferred
+-   Advertising 0.0.0.0/0 unintentionally
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Keep routing simple.
+-   Prefer specific prefixes.
+-   Document every routed network.
+-   Test using ip route get before changing production.
+-   Review routing after adding new VLANs.
+-   Audit AllowedIPs regularly.
+
+===============================================================================
+12. CHAPTER CHECKLIST
+===============================================================================
+
+[ ] Routes documented [ ] AllowedIPs reviewed [ ] Return routes verified
+[ ] Forwarding enabled [ ] Route testing completed [ ] Packet captures
+validated
+
+END OF CHAPTER 6

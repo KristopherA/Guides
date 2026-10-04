@@ -1,0 +1,207 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 19 PACKET CAPTURE
+AND TROUBLESHOOTING
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter provides a structured workflow for diagnosing WireGuard
+problems using packet captures, routing tools, firewall inspection, and
+connection tracking.
+
+===============================================================================
+2. TROUBLESHOOTING METHODOLOGY
+===============================================================================
+
+Follow this order:
+
+1.  Verify tunnel status
+2.  Verify handshake
+3.  Verify routing
+4.  Verify firewall
+5.  Capture packets
+6.  Validate application
+
+Do not change configuration until the current state is understood.
+
+===============================================================================
+3. VERIFY THE TUNNEL
+===============================================================================
+
+Display status
+
+wg wg show
+
+Look for
+
+-   Latest handshake
+-   Endpoint
+-   Transfer counters
+-   AllowedIPs
+
+Healthy indicators
+
+-   Recent handshake
+-   Counters increase during traffic
+
+===============================================================================
+4. ROUTING DIAGNOSTICS
+===============================================================================
+
+Display routes
+
+ip route ip -6 route
+
+Test route selection
+
+ip route get 10.60.10.15 ip -6 route get fd42:100:100::10
+
+Monitor route changes
+
+ip monitor route
+
+===============================================================================
+5. PACKET CAPTURE
+===============================================================================
+
+WAN interface
+
+tcpdump -ni eth0 udp port 51820
+
+VPN interface
+
+tcpdump -ni wg0
+
+Specific host
+
+tcpdump -ni wg0 host 10.60.10.15
+
+DNS
+
+tcpdump -ni wg0 port 53
+
+Save capture
+
+tcpdump -ni wg0 -w wg_capture.pcap
+
+Open .pcap files in Wireshark for detailed analysis.
+
+===============================================================================
+6. WIRESHARK
+===============================================================================
+
+Useful display filters
+
+udp.port == 51820 ip.addr == 10.60.10.15 ipv6 dns tcp.port == 443
+
+Use packet timestamps to correlate with system logs.
+
+===============================================================================
+7. FIREWALL DIAGNOSTICS
+===============================================================================
+
+iptables
+
+iptables -L -n -v iptables -t nat -L -n -v
+
+nftables
+
+nft list ruleset
+
+Look for increasing DROP counters.
+
+===============================================================================
+8. CONNECTION TRACKING
+===============================================================================
+
+View conntrack table
+
+conntrack -L
+
+Monitor events
+
+conntrack -E
+
+Useful for identifying NAT and state-tracking issues.
+
+===============================================================================
+9. SOCKET DIAGNOSTICS
+===============================================================================
+
+Listening sockets
+
+ss -lunp | grep 51820
+
+Summary
+
+ss -s
+
+Verify WireGuard is bound to the expected UDP port.
+
+===============================================================================
+10. COMMON FAILURE SCENARIOS
+===============================================================================
+
+No handshake
+
+-   UDP blocked
+-   DNS failure
+-   Incorrect endpoint
+-   Key mismatch
+
+Handshake but no traffic
+
+-   Missing route
+-   Missing IP forwarding
+-   Firewall
+-   Incorrect AllowedIPs
+
+Can ping but application fails
+
+-   Application firewall
+-   Incorrect service port
+-   TLS issue
+
+Intermittent failures
+
+-   MTU
+-   Packet loss
+-   NAT timeout
+-   Internet instability
+
+===============================================================================
+11. DECISION TREE
+===============================================================================
+
+Handshake?
+
+NO | Check UDP/51820 Firewall Endpoint DNS Keys
+
+YES | Traffic?
+
+NO | Routes AllowedIPs Forwarding Firewall
+
+YES | Application?
+
+NO | Host firewall Service TLS Authentication
+
+===============================================================================
+12. BEST PRACTICES
+===============================================================================
+
+-   Capture traffic at both tunnel endpoints.
+-   Record timestamps before troubleshooting.
+-   Compare packet captures from both sides.
+-   Test one change at a time.
+-   Preserve captures for major incidents.
+-   Document root cause and resolution.
+
+===============================================================================
+13. TROUBLESHOOTING CHECKLIST
+===============================================================================
+
+[ ] Handshake verified [ ] Routes validated [ ] Firewall reviewed [ ]
+Packet capture completed [ ] Connection tracking checked [ ] Application
+tested [ ] Root cause documented [ ] Monitoring updated
+
+END OF CHAPTER 19

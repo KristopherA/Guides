@@ -1,0 +1,771 @@
+================================================================================
+  SECURITY HARDENING GUIDE
+  Infrastructure: Ubuntu 24.04 LTS | Active Directory | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+Reference: CIS Benchmark Ubuntu 24.04 LTS v1.0, CIS macOS Benchmark
+
+IMPORTANT: Test ALL changes in a non-production environment first.
+           Many of these settings can lock out legitimate access if applied
+           incorrectly. Always ensure console/IPMI access before hardening SSH.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+  1.  Ubuntu — SSH Hardening
+  2.  Ubuntu — PAM and Password Policy
+  3.  Ubuntu — auditd (Audit Logging)
+  4.  Ubuntu — AppArmor
+  5.  Ubuntu — Kernel and Network Hardening (sysctl)
+  6.  Ubuntu — File System and Mount Hardening
+  7.  Ubuntu — Service Minimization
+  8.  Ubuntu — Automatic Security Updates
+  9.  Active Directory — Account Security Audit
+  10. Active Directory — Privileged Access Hardening
+  11. macOS — Security Baseline
+  12. Cross-Platform — Security Audit Checklist
+
+
+================================================================================
+SECTION 1: UBUNTU — SSH HARDENING
+================================================================================
+
+Config file: /etc/ssh/sshd_config
+Always test before applying: sudo sshd -t
+Always reload (not restart) to avoid dropping sessions: sudo systemctl reload ssh
+
+--------------------------------------------------------------------------------
+1.1 RECOMMENDED /etc/ssh/sshd_config SETTINGS
+--------------------------------------------------------------------------------
+
+  # Protocol and version
+  Protocol 2
+
+  # Restrict to specific users or groups (pick one approach)
+  AllowGroups ssh-users sudo                   # only these groups can SSH
+  # AllowUsers ubuntu admin jsmith@example.com  # or list individual users
+
+  # Authentication
+  PermitRootLogin no                           # never allow root SSH
+  PasswordAuthentication no                    # keys only
+  PermitEmptyPasswords no
+  ChallengeResponseAuthentication no
+  KbdInteractiveAuthentication no
+  PubkeyAuthentication yes
+  AuthorizedKeysFile .ssh/authorized_keys
+
+  # Connection hardening
+  MaxAuthTries 3                               # lockout after 3 failed attempts
+  MaxSessions 5
+  LoginGraceTime 30                            # 30 seconds to authenticate
+  ClientAliveInterval 300                      # disconnect idle sessions after 5min
+  ClientAliveCountMax 2
+  TCPKeepAlive no
+
+  # Disable unused features
+  X11Forwarding no
+  AllowAgentForwarding no
+  AllowTcpForwarding no                        # set to "yes" only if tunnels needed
+  PermitTunnel no
+  GatewayPorts no
+  PrintMotd no
+  Banner /etc/ssh/banner                       # legal warning banner
+
+  # Logging
+  LogLevel VERBOSE                             # logs key fingerprints
+  SyslogFacility AUTH
+
+  # Ciphers and MACs (remove legacy algorithms)
+  KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512
+  Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr
+  MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512
+
+APPLY AND VERIFY
+  sudo sshd -t && sudo systemctl reload ssh
+  # Test from a second session before closing current one
+
+CREATE SSH BANNER (legal warning)
+  sudo tee /etc/ssh/banner << 'EOF'
+  ╔══════════════════════════════════════════════════════════════╗
+  ║  AUTHORIZED ACCESS ONLY                                      ║
+  ║  This system is for authorized users only. All activity is   ║
+  ║  logged and monitored. Unauthorized access is prohibited.    ║
+  ╚══════════════════════════════════════════════════════════════╝
+  EOF
+
+AUDIT CURRENT SSH CONFIG AGAINST RECOMMENDATIONS
+  sudo sshd -T | grep -iE "permitrootlogin|passwordauthentication|x11forwarding|allowtcpforwarding|maxauthtries"
+
+
+================================================================================
+SECTION 2: UBUNTU — PAM AND PASSWORD POLICY
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1 PASSWORD COMPLEXITY (libpam-pwquality)
+--------------------------------------------------------------------------------
+
+INSTALL
+  sudo apt install -y libpam-pwquality
+
+CONFIGURE /etc/security/pwquality.conf:
+  minlen = 14           # minimum length
+  minclass = 4          # require all 4 character classes (upper/lower/digit/special)
+  maxrepeat = 3         # no more than 3 consecutive identical characters
+  maxsequence = 4       # no more than 4 sequential characters (e.g., 1234, abcd)
+  dictcheck = 1         # check against dictionary words
+  usercheck = 1         # reject passwords containing username
+  gecoscheck = 1        # reject passwords from GECOS field
+  retry = 3             # number of retries
+
+ENABLE IN PAM (/etc/pam.d/common-password — add near top):
+  password requisite pam_pwquality.so retry=3
+
+--------------------------------------------------------------------------------
+2.2 ACCOUNT LOCKOUT (pam_faillock)
+--------------------------------------------------------------------------------
+
+CONFIGURE /etc/security/faillock.conf:
+  deny = 5              # lock after 5 failures
+  fail_interval = 900   # within 15 minutes
+  unlock_time = 900     # lock for 15 minutes
+  audit                 # log failed attempts
+  silent                # don't reveal lockout to attacker
+
+ENABLE IN PAM (/etc/pam.d/common-auth — add these two lines):
+  auth required pam_faillock.so preauth
+  # (existing auth lines)
+  auth required pam_faillock.so authfail
+
+CHECK LOCKED ACCOUNTS
+  sudo faillock
+
+UNLOCK A SPECIFIC USER
+  sudo faillock --user jsmith --reset
+
+--------------------------------------------------------------------------------
+2.3 PASSWORD AGING (login.defs)
+--------------------------------------------------------------------------------
+
+CONFIGURE /etc/login.defs:
+  PASS_MAX_DAYS   90    # maximum password age
+  PASS_MIN_DAYS   1     # minimum days before change allowed
+  PASS_WARN_AGE   14    # warn 14 days before expiry
+
+APPLY TO EXISTING USER (doesn't auto-apply from login.defs)
+  sudo chage -M 90 -m 1 -W 14 jsmith
+
+CHECK A USER'S PASSWORD AGING
+  sudo chage -l jsmith
+
+LIST ALL USERS AND PASSWORD EXPIRY
+  sudo awk -F: '$1 !~ /^#/ && $3 >= 1000 {print $1}' /etc/passwd | while read u; do
+    echo -n "$u: "; sudo chage -l $u | grep "Password expires"
+  done
+
+
+================================================================================
+SECTION 3: UBUNTU — AUDITD (AUDIT LOGGING)
+================================================================================
+
+Purpose: Kernel-level audit trail for file access, privilege escalation,
+user logins, and system calls. Required for many compliance frameworks.
+
+INSTALL
+  sudo apt install -y auditd audispd-plugins
+  sudo systemctl enable --now auditd
+
+--------------------------------------------------------------------------------
+3.1 AUDIT RULES (/etc/audit/rules.d/hardening.rules)
+--------------------------------------------------------------------------------
+
+CREATE RULES FILE:
+  sudo tee /etc/audit/rules.d/hardening.rules << 'EOF'
+  # Delete all existing rules
+  -D
+
+  # Increase buffer size
+  -b 8192
+
+  # Failure mode: 1=log, 2=panic
+  -f 1
+
+  # --- Identity and Authentication ---
+  -w /etc/passwd -p wa -k identity
+  -w /etc/shadow -p wa -k identity
+  -w /etc/group -p wa -k identity
+  -w /etc/gshadow -p wa -k identity
+  -w /etc/sudoers -p wa -k sudoers
+  -w /etc/sudoers.d/ -p wa -k sudoers
+  -w /etc/ssh/sshd_config -p wa -k sshd_config
+
+  # --- Privilege Escalation ---
+  -a always,exit -F arch=b64 -S setuid -F a0=0 -F exe=/usr/bin/su -k privilege_escalation
+  -a always,exit -F arch=b64 -S setresuid -F a0=0 -F exe=/usr/bin/sudo -k privilege_escalation
+
+  # --- Login and Logout ---
+  -w /var/log/lastlog -p wa -k logins
+  -w /var/run/faillock/ -p wa -k logins
+
+  # --- Session Initiation ---
+  -w /var/run/utmp -p wa -k session
+  -w /var/log/wtmp -p wa -k session
+  -w /var/log/btmp -p wa -k session
+
+  # --- System Administration ---
+  -w /sbin/insmod -p x -k modules
+  -w /sbin/rmmod -p x -k modules
+  -w /sbin/modprobe -p x -k modules
+  -a always,exit -F arch=b64 -S init_module -S delete_module -k modules
+
+  # --- File Deletion by Users ---
+  -a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -F auid>=1000 -F auid!=4294967295 -k delete
+
+  # --- Unauthorized File Access Attempts ---
+  -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -k access
+  -a always,exit -F arch=b64 -S creat -S open -S openat -S truncate -S ftruncate -F exit=-EPERM -F auid>=1000 -k access
+
+  # --- Network Config Changes ---
+  -a always,exit -F arch=b64 -S sethostname -S setdomainname -k network_modifications
+  -w /etc/hosts -p wa -k network_modifications
+  -w /etc/netplan/ -p wa -k network_modifications
+
+  # --- Time Changes ---
+  -a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -k time_change
+  -w /etc/localtime -p wa -k time_change
+
+  # --- Make rules immutable (requires reboot to change) ---
+  # Uncomment in production after testing:
+  # -e 2
+  EOF
+
+LOAD RULES
+  sudo augenrules --load
+  sudo auditctl -l   # verify rules are loaded
+
+VERIFY AUDITD IS RUNNING
+  sudo auditctl -s | grep "enabled"
+
+--------------------------------------------------------------------------------
+3.2 QUERYING AUDIT LOGS
+--------------------------------------------------------------------------------
+
+SEARCH BY KEY
+  sudo ausearch -k sudoers --start recent
+  sudo ausearch -k identity -i | tail -30
+
+SHOW FAILED ACCESS ATTEMPTS
+  sudo ausearch -k access -i | grep "comm="
+
+SHOW ALL SUDO USAGE
+  sudo ausearch -k privilege_escalation -i
+
+SHOW LOGIN EVENTS
+  sudo ausearch -k logins -i --start today
+
+GENERATE COMPLIANCE REPORT
+  sudo aureport --summary
+  sudo aureport -au   # authentication report
+  sudo aureport -l    # login report
+  sudo aureport -x    # executable report
+
+
+================================================================================
+SECTION 4: UBUNTU — APPARMOR
+================================================================================
+
+AppArmor is enabled by default on Ubuntu. It confines programs to specific
+file access, network, and capability permissions.
+
+CHECK STATUS
+  sudo aa-status
+
+LIST ALL PROFILES AND THEIR MODE
+  sudo aa-status | grep -E "enforce|complain"
+
+CHECK IF A SPECIFIC PROCESS IS CONFINED
+  ps auxZ | grep nginx
+
+GENERATE A PROFILE FOR AN APPLICATION (learning mode)
+  sudo apt install -y apparmor-utils
+  sudo aa-genprof /usr/local/bin/myapp
+  # Run the application, then press S to scan, F to finish
+
+PUT A PROFILE IN COMPLAIN MODE (log but don't block — for testing)
+  sudo aa-complain /etc/apparmor.d/usr.sbin.nginx
+
+PUT A PROFILE IN ENFORCE MODE (active blocking)
+  sudo aa-enforce /etc/apparmor.d/usr.sbin.nginx
+
+VIEW APPARMOR DENIALS IN LOG
+  sudo journalctl -k | grep "apparmor=\"DENIED\"" | tail -20
+  sudo aa-logprof   # interactive tool to update profile from denials
+
+DISABLE A SPECIFIC PROFILE (use sparingly)
+  sudo ln -s /etc/apparmor.d/usr.sbin.nginx /etc/apparmor.d/disable/
+  sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.nginx
+
+
+================================================================================
+SECTION 5: UBUNTU — KERNEL AND NETWORK HARDENING (sysctl)
+================================================================================
+
+CREATE /etc/sysctl.d/99-hardening.conf:
+  sudo tee /etc/sysctl.d/99-hardening.conf << 'EOF'
+  # ── Network Hardening ──────────────────────────────────────────────
+  # Disable IP forwarding (unless this is a router)
+  net.ipv4.ip_forward = 0
+  net.ipv6.conf.all.forwarding = 0
+
+  # Disable ICMP redirects
+  net.ipv4.conf.all.accept_redirects = 0
+  net.ipv4.conf.default.accept_redirects = 0
+  net.ipv4.conf.all.send_redirects = 0
+  net.ipv6.conf.all.accept_redirects = 0
+
+  # Disable source routing
+  net.ipv4.conf.all.accept_source_route = 0
+  net.ipv4.conf.default.accept_source_route = 0
+  net.ipv6.conf.all.accept_source_route = 0
+
+  # Enable reverse path filtering (anti-spoofing)
+  net.ipv4.conf.all.rp_filter = 1
+  net.ipv4.conf.default.rp_filter = 1
+
+  # Log suspicious packets
+  net.ipv4.conf.all.log_martians = 1
+  net.ipv4.conf.default.log_martians = 1
+
+  # Ignore ICMP broadcast pings
+  net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+  # Ignore bogus ICMP error responses
+  net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+  # Enable SYN cookies (protect against SYN flood)
+  net.ipv4.tcp_syncookies = 1
+
+  # Disable IPv6 if not used
+  # net.ipv6.conf.all.disable_ipv6 = 1
+
+  # ── Kernel Hardening ───────────────────────────────────────────────
+  # Restrict dmesg to root
+  kernel.dmesg_restrict = 1
+
+  # Restrict kernel pointer exposure
+  kernel.kptr_restrict = 2
+
+  # Disable SysRq key (or restrict: 1=all, 176=safe subset)
+  kernel.sysrq = 0
+
+  # Restrict ptrace to root (prevents process inspection by non-root)
+  kernel.yama.ptrace_scope = 1
+
+  # Disable core dumps with setuid bit
+  fs.suid_dumpable = 0
+
+  # Randomize address space (ASLR)
+  kernel.randomize_va_space = 2
+
+  # Restrict /proc access
+  kernel.unprivileged_userns_clone = 0
+  EOF
+
+APPLY
+  sudo sysctl -p /etc/sysctl.d/99-hardening.conf
+
+VERIFY KEY SETTINGS
+  sudo sysctl kernel.randomize_va_space kernel.dmesg_restrict net.ipv4.tcp_syncookies
+
+
+================================================================================
+SECTION 6: UBUNTU — FILE SYSTEM AND MOUNT HARDENING
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1 /tmp HARDENING
+--------------------------------------------------------------------------------
+
+MOUNT /tmp AS TMPFS WITH RESTRICTIONS (/etc/fstab):
+  tmpfs  /tmp  tmpfs  defaults,nodev,nosuid,noexec,size=2G  0  0
+
+  # nodev: no device files
+  # nosuid: disable setuid/setgid execution
+  # noexec: no direct execution of binaries
+
+APPLY WITHOUT REBOOT
+  sudo mount -o remount,nodev,nosuid,noexec /tmp
+
+SAME FOR /var/tmp (often linked to /tmp)
+  sudo chmod 1777 /var/tmp
+
+--------------------------------------------------------------------------------
+6.2 SECURE /proc MOUNT
+--------------------------------------------------------------------------------
+
+In /etc/fstab:
+  proc  /proc  proc  defaults,nosuid,nodev,noexec,hidepid=2  0  0
+
+  # hidepid=2: users can only see their own processes (not other users')
+
+APPLY WITHOUT REBOOT
+  sudo mount -o remount,nosuid,nodev,noexec,hidepid=2 /proc
+
+--------------------------------------------------------------------------------
+6.3 SETUID/SETGID FILE AUDIT
+--------------------------------------------------------------------------------
+
+FIND ALL SETUID FILES (should be a known/small list)
+  sudo find / -xdev -type f -perm -4000 -exec ls -la {} \; 2>/dev/null
+
+FIND ALL SETGID FILES
+  sudo find / -xdev -type f -perm -2000 -exec ls -la {} \; 2>/dev/null
+
+REMOVE UNNECESSARY SETUID BITS
+  sudo chmod u-s /usr/bin/at    # example: remove setuid from 'at' if unused
+
+FIND WORLD-WRITABLE FILES (security risk)
+  sudo find / -xdev -type f -perm -0002 -not -path "/proc/*" 2>/dev/null
+
+FIND UNOWNED FILES (orphaned after user deletion)
+  sudo find / -xdev \( -nouser -o -nogroup \) -exec ls -la {} \; 2>/dev/null
+
+
+================================================================================
+SECTION 7: UBUNTU — SERVICE MINIMIZATION
+================================================================================
+
+PRINCIPLE: Disable every service not actively needed.
+
+LIST ALL ENABLED SERVICES
+  systemctl list-unit-files --type=service --state=enabled
+
+COMMON SERVICES TO DISABLE IF NOT NEEDED:
+  sudo systemctl disable --now avahi-daemon       # mDNS (not needed in AD environment)
+  sudo systemctl disable --now cups               # printing service
+  sudo systemctl disable --now bluetooth          # Bluetooth on servers
+  sudo systemctl disable --now snapd              # Snap package manager (if not using)
+  sudo systemctl disable --now rpcbind            # NFS portmapper (if not using NFS)
+  sudo systemctl disable --now nfs-server         # NFS server (if not using)
+
+CHECK FOR LISTENING SERVICES THAT SHOULDN'T BE THERE
+  sudo ss -tlnp | grep -v "127.0.0.1\|::1"
+  # All listening addresses here are reachable from the network
+  # Investigate anything unexpected
+
+REMOVE PACKAGES NOT NEEDED
+  sudo apt purge -y telnet rsh-client rsh-server ftp nis talk
+  sudo apt autoremove -y
+
+
+================================================================================
+SECTION 8: UBUNTU — AUTOMATIC SECURITY UPDATES
+================================================================================
+
+CONFIGURE /etc/apt/apt.conf.d/50unattended-upgrades:
+  Unattended-Upgrade::Allowed-Origins {
+      "${distro_id}:${distro_codename}-security";
+  };
+  Unattended-Upgrade::Remove-Unused-Dependencies "true";
+  Unattended-Upgrade::Automatic-Reboot "false";        // set true only for non-critical
+  Unattended-Upgrade::Mail "it@example.com";
+  Unattended-Upgrade::MailReport "on-change";
+
+CONFIGURE /etc/apt/apt.conf.d/20auto-upgrades:
+  APT::Periodic::Update-Package-Lists "1";         // update lists daily
+  APT::Periodic::Download-Upgradeable-Packages "1";
+  APT::Periodic::AutocleanInterval "7";
+  APT::Periodic::Unattended-Upgrade "1";           // install daily
+
+VERIFY CONFIGURATION
+  sudo unattended-upgrades --dry-run --debug 2>&1 | tail -20
+
+CHECK LAST RUN
+  sudo cat /var/log/unattended-upgrades/unattended-upgrades.log | tail -20
+
+
+================================================================================
+SECTION 9: ACTIVE DIRECTORY — ACCOUNT SECURITY AUDIT
+================================================================================
+
+Run these monthly or quarterly as part of a security review.
+
+--------------------------------------------------------------------------------
+9.1 PRIVILEGED ACCOUNT AUDIT
+--------------------------------------------------------------------------------
+
+LIST ALL DOMAIN ADMINS
+  Get-ADGroupMember "Domain Admins" -Recursive | Select-Object Name,SamAccountName,objectClass | Sort-Object Name
+
+LIST ALL ENTERPRISE ADMINS
+  Get-ADGroupMember "Enterprise Admins" -Recursive | Select-Object Name,SamAccountName | Sort-Object Name
+
+LIST MEMBERS OF ALL PRIVILEGED GROUPS
+  foreach ($group in @("Domain Admins","Schema Admins","Enterprise Admins","Group Policy Creator Owners","Backup Operators","Account Operators","Server Operators")) {
+    Write-Host "=== $group ===" -ForegroundColor Cyan
+    Get-ADGroupMember $group -Recursive -ErrorAction SilentlyContinue | Select-Object Name,SamAccountName
+  }
+
+FIND ADMIN ACCOUNTS USED FOR DAILY TASKS (no separate admin account)
+  Get-ADUser -Filter {AdminCount -eq 1 -and Enabled -eq $true} -Properties AdminCount,LastLogonDate,Title |
+    Where-Object {$_.Title -notlike "*admin*"} |
+    Select-Object Name,SamAccountName,Title,LastLogonDate
+
+--------------------------------------------------------------------------------
+9.2 STALE AND RISKY ACCOUNT AUDIT
+--------------------------------------------------------------------------------
+
+NEVER-LOGGED-IN ACCOUNTS (older than 30 days)
+  $cutoff = (Get-Date).AddDays(-30)
+  Get-ADUser -Filter {Enabled -eq $true -and LastLogonDate -notlike "*"} -Properties LastLogonDate,WhenCreated |
+    Where-Object {$_.WhenCreated -lt $cutoff} |
+    Select-Object Name,SamAccountName,WhenCreated | Export-Csv .\never-logged-in.csv -NoTypeInformation
+
+PASSWORDS SET TO NEVER EXPIRE
+  Get-ADUser -Filter {PasswordNeverExpires -eq $true -and Enabled -eq $true} -Properties PasswordNeverExpires |
+    Select-Object Name,SamAccountName | Export-Csv .\no-password-expiry.csv -NoTypeInformation
+
+SERVICE ACCOUNTS WITHOUT MANAGED PASSWORDS (gMSA audit)
+  # List regular user accounts with "svc" in name that aren't gMSA
+  Get-ADUser -Filter {SamAccountName -like "svc*" -and Enabled -eq $true} -Properties PasswordLastSet |
+    Select-Object Name,SamAccountName,PasswordLastSet | Sort-Object PasswordLastSet
+
+ACCOUNTS WITH REVERSIBLE ENCRYPTION ENABLED
+  Get-ADUser -Filter {AllowReversiblePasswordEncryption -eq $true} |
+    Select-Object Name,SamAccountName
+
+ACCOUNTS WITH KERBEROS PREAUTHENTICATION DISABLED (ASREPRoastable)
+  Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true -and Enabled -eq $true} |
+    Select-Object Name,SamAccountName
+
+FIND KERBEROASTABLE ACCOUNTS (SPNs set on user accounts)
+  Get-ADUser -Filter {ServicePrincipalNames -ne "$null" -and Enabled -eq $true} -Properties ServicePrincipalNames |
+    Select-Object Name,SamAccountName,ServicePrincipalNames | Where-Object {$_.ServicePrincipalNames.Count -gt 0}
+
+--------------------------------------------------------------------------------
+9.3 EXPORT FULL SECURITY AUDIT REPORT
+--------------------------------------------------------------------------------
+
+  $report = @()
+  Get-ADUser -Filter * -Properties * | ForEach-Object {
+    $report += [PSCustomObject]@{
+      Username           = $_.SamAccountName
+      DisplayName        = $_.DisplayName
+      Enabled            = $_.Enabled
+      PasswordExpired    = $_.PasswordExpired
+      PasswordNeverExp   = $_.PasswordNeverExpires
+      LastLogon          = $_.LastLogonDate
+      PasswordLastSet    = $_.PasswordLastSet
+      LockedOut          = $_.LockedOut
+      AdminCount         = $_.AdminCount
+      OU                 = ($_.DistinguishedName -replace '^CN=[^,]+,','')
+    }
+  }
+  $report | Export-Csv .\ad-security-audit-$(Get-Date -Format 'yyyy-MM-dd').csv -NoTypeInformation
+
+
+================================================================================
+SECTION 10: ACTIVE DIRECTORY — PRIVILEGED ACCESS HARDENING
+================================================================================
+
+--------------------------------------------------------------------------------
+10.1 TIERED ADMINISTRATION MODEL
+--------------------------------------------------------------------------------
+
+RECOMMENDED STRUCTURE:
+  Tier 0: Domain Controllers, AD infrastructure
+           → Only Tier 0 admin accounts (no internet access)
+  Tier 1: Member servers (file, web, app servers)
+           → Tier 1 admin accounts (separate from Tier 0)
+  Tier 2: Workstations
+           → Tier 2 / helpdesk accounts
+
+ENFORCE TIERING VIA AUTHENTICATION POLICY SILOS (PowerShell)
+  New-ADAuthenticationPolicySilo -Name "Tier0Silo" -Enforce
+  New-ADAuthenticationPolicy -Name "Tier0Policy" -UserAllowedToAuthenticateFrom (
+    Get-ADComputer -Filter {Name -like "DC*"} | ForEach-Object {"host/" + $_.DNSHostName})
+  Set-ADAuthenticationPolicySilo -Identity "Tier0Silo" -UserAuthenticationPolicy "Tier0Policy"
+  Grant-ADAuthenticationPolicySiloAccess -Identity "Tier0Silo" -Account (Get-ADUser "t0-admin")
+  Set-ADUser "t0-admin" -AuthenticationPolicySilo "Tier0Silo"
+
+--------------------------------------------------------------------------------
+10.2 PROTECTED USERS SECURITY GROUP
+--------------------------------------------------------------------------------
+
+Add privileged accounts to the Protected Users group — this enforces:
+  - No NTLM authentication (Kerberos only)
+  - No credential caching
+  - Kerberos tickets limited to 4 hours
+  - No DES or RC4 encryption
+
+  Add-ADGroupMember -Identity "Protected Users" -Members "t0-admin","t1-admin"
+  # WARNING: Test thoroughly — NTLM disable breaks some legacy apps
+
+--------------------------------------------------------------------------------
+10.3 LAPS (LOCAL ADMINISTRATOR PASSWORD SOLUTION)
+--------------------------------------------------------------------------------
+
+Purpose: Randomize local Administrator password on each workstation/server,
+stored in AD and rotated automatically.
+
+INSTALL LAPS ON MANAGEMENT WORKSTATION
+  # Download from Microsoft: aka.ms/LAPS
+  msiexec /i LAPS.x64.msi ADDLOCAL=Management.UI,Management.PS,Management.ADMX /quiet
+
+EXTEND AD SCHEMA (once per domain)
+  Update-LapsADSchema
+
+SET AD PERMISSIONS ON OU
+  Set-LapsADComputerSelfPermission -Identity "OU=Workstations,DC=example,DC=com"
+  Set-LapsADReadPasswordPermission -Identity "OU=Workstations,DC=example,DC=com" -AllowedPrincipals "IT-Admins"
+
+DEPLOY VIA GPO: Computer > Admin Templates > LAPS
+  - Enable local admin password management: Enabled
+  - Password Settings: Complexity=Large, Length=20, Age=30 days
+
+READ A COMPUTER'S LOCAL ADMIN PASSWORD
+  Get-LapsADPassword -Identity WS-001 -AsPlainText
+
+
+================================================================================
+SECTION 11: macOS — SECURITY BASELINE
+================================================================================
+
+--------------------------------------------------------------------------------
+11.1 AUTOMATED BASELINE CHECK
+--------------------------------------------------------------------------------
+
+CHECK FILEVAULT (all managed Macs must be encrypted)
+  fdesetup status
+  # "FileVault is On." = compliant
+
+CHECK FIREWALL
+  /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+  # Expected: "Firewall is enabled."
+
+CHECK GATEKEEPER
+  spctl --status
+  # Expected: "assessments enabled"
+
+CHECK SYSTEM INTEGRITY PROTECTION (SIP)
+  csrutil status
+  # Expected: "System Integrity Protection status: enabled."
+
+CHECK AUTOMATIC UPDATES
+  defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled
+  defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload
+  # Both should return 1
+
+CHECK SCREEN LOCK (idle timer)
+  defaults -currentHost read com.apple.screensaver idleTime
+  # Should be 300 (5 minutes) or less
+
+CHECK REMOTE LOGIN (SSH — should match policy)
+  sudo systemsetup -getremotelogin
+
+CHECK REMOTE MANAGEMENT (ARD — should be off unless managed)
+  sudo systemsetup -getremoteappleevents
+
+--------------------------------------------------------------------------------
+11.2 APPLYING SECURITY SETTINGS (run as admin)
+--------------------------------------------------------------------------------
+
+ENABLE FIREWALL
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on   # stealth mode
+
+ENABLE FIREWALL LOGGING
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setloggingmode on
+
+SET SCREEN LOCK (5 minutes)
+  sudo defaults write /Library/Preferences/com.apple.screensaver loginWindowIdleTime -int 300
+  # Also require password immediately after sleep:
+  defaults write com.apple.screensaver askForPassword -int 1
+  defaults write com.apple.screensaver askForPasswordDelay -int 0
+
+DISABLE BLUETOOTH IF NOT NEEDED
+  sudo defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0
+
+DISABLE IR RECEIVER
+  sudo defaults write /Library/Preferences/com.apple.driver.AppleIRController DeviceEnabled -int 0
+
+DISABLE GUEST ACCOUNT
+  sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
+
+SET LOGIN WINDOW TO NAME AND PASSWORD (not user list)
+  sudo defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
+
+DISABLE REMOTE APPLE EVENTS
+  sudo systemsetup -setremoteappleevents off
+
+DISABLE INTERNET SHARING
+  sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.nat NAT -dict Enabled -int 0
+
+--------------------------------------------------------------------------------
+11.3 FILEVAULT MANAGEMENT
+--------------------------------------------------------------------------------
+
+ENABLE FILEVAULT (generates recovery key — save it securely)
+  sudo fdesetup enable -user admin 2>/dev/null
+
+GET FILEVAULT RECOVERY KEY (if institutional key used)
+  sudo fdesetup showrecovery -user admin
+
+CHECK ALL USERS AUTHORIZED FOR FILEVAULT UNLOCK
+  sudo fdesetup list
+
+ADD A USER TO FILEVAULT (so they can unlock)
+  sudo fdesetup add -usertoadd jsmith
+
+REMOVE A USER FROM FILEVAULT
+  sudo fdesetup remove -user jsmith
+
+ROTATE RECOVERY KEY
+  sudo fdesetup changerecovery -personal
+
+
+================================================================================
+SECTION 12: CROSS-PLATFORM — SECURITY AUDIT CHECKLIST
+================================================================================
+
+Run this checklist monthly. Document results and remediation.
+
+UBUNTU SERVERS
+  [ ] All failed SSH logins reviewed:      sudo grep "Failed password" /var/log/auth.log | grep "$(date '+%b')" | awk '{print $11}' | sort | uniq -c | sort -rn | head -10
+  [ ] No unexpected listening ports:       sudo ss -tlnp | grep -v "127.0.0.1\|::1"
+  [ ] UFW enabled and rules reviewed:      sudo ufw status numbered
+  [ ] Fail2ban active and banning:         sudo fail2ban-client status sshd
+  [ ] No unplanned setuid files:           sudo find / -xdev -perm -4000 -type f 2>/dev/null
+  [ ] All packages up to date:             apt list --upgradable 2>/dev/null | grep -c upgradable
+  [ ] Auditd running:                      sudo auditctl -s | grep "enabled 1"
+  [ ] No unexpected cron jobs:             sudo ls -la /etc/cron.d/ /var/spool/cron/crontabs/
+  [ ] No unknown user accounts:            awk -F: '$3 >= 1000 {print $1,$3}' /etc/passwd
+  [ ] World-writable files:                sudo find / -xdev -perm -0002 -type f 2>/dev/null | grep -v /proc | head
+
+ACTIVE DIRECTORY
+  [ ] No new Domain Admins since last audit
+  [ ] Locked accounts reviewed and disabled:   Search-ADAccount -LockedOut
+  [ ] Stale accounts (90+ days) disabled
+  [ ] Password-never-expire accounts justified
+  [ ] ASREPRoastable accounts reviewed (DoesNotRequirePreAuth)
+  [ ] Kerberoastable accounts reviewed (SPNs on user objects)
+  [ ] Replication healthy:                 repadmin /replsummary
+  [ ] SYSVOL/NETLOGON accessible from all sites
+
+macOS WORKSTATIONS
+  [ ] FileVault enabled on all Macs
+  [ ] Firewall enabled on all Macs
+  [ ] Gatekeeper enabled
+  [ ] SIP enabled
+  [ ] No unknown admin accounts:           dscl . read /Groups/admin GroupMembership
+  [ ] Automatic updates configured
+  [ ] Screen lock set ≤ 5 minutes
+  [ ] Guest account disabled
+  [ ] All MDM profiles still installed:    sudo profiles list -all | grep -c "attribute: name"
+
+================================================================================
+END OF DOCUMENT
+================================================================================

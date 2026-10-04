@@ -1,0 +1,259 @@
+INDICATORS AND RED FLAGS
+Part of: URL & Document Triage (see ../WORKFLOW.txt)
+Last reviewed: 2026-09-04
+
+WHAT THIS IS
+------------
+Every indicator the workflow looks for, in one place, with what it means and
+how much weight it carries. Use it to read a stage report, or as the checklist
+when scoring in stage 3.
+
+Weight column:
+  DECISIVE     on its own, enough for a malicious verdict
+  STRONG       2 points; two of these together settles it
+  SUPPORTING   1 point; meaningful, but not on its own
+  CONTEXT      0 points; recorded, but never moves a verdict alone
+
+These are not just annotations. The stage scripts emit each flag with its
+weight attached:
+
+  CHAIN::FLAG::decisive::doc:dde-field
+  CHAIN::FLAG::strong::doc:remote-template
+  CHAIN::FLAG::supporting::doc:external-relationship
+
+and run_triage.sh scores them with exactly the arithmetic above: any
+decisive flag means MALICIOUS, otherwise 4+ points is MALICIOUS and 2-3 is
+SUSPICIOUS. So this table is not a second opinion about the score - it is
+the score, written out in prose.
+
+If you disagree with a weight here, change it in this file AND in the script
+that emits it, together. They are meant to be impossible to disagree.
+
+There is a fifth weight the scripts use that has no entry below, because it
+is not an indicator at all:
+
+  INCOMPLETE   a check that DID NOT RUN - a missing tool, a file that would
+               not open, a lookup a fetch policy suppressed. Scores 0, but
+               floors the verdict at SUSPICIOUS, because "the scanner found
+               nothing" and "the scanner never ran" produce identical clean
+               reports and the difference is the whole verdict. See the
+               ABSENCE OF EVIDENCE section at the end.
+
+===========================================================================
+EMAIL HEADERS AND SENDER
+===========================================================================
+STRONG      SPF fail plus DKIM fail plus DMARC fail together
+SUPPORTING  Any single SPF / DKIM / DMARC failure
+SUPPORTING  Return-Path domain differs from From domain
+STRONG      Reply-To domain differs from From domain
+              The most common business-email-compromise tell: the victim's
+              reply goes to the attacker while the message looks legitimate.
+SUPPORTING  Message-ID domain differs from From domain
+SUPPORTING  Free webmail address claiming to be an organisation
+STRONG      Display name impersonating a person or brand while the address
+            does not match ("IT Helpdesk <random@gmail.com>")
+SUPPORTING  Sending IP geography or hosting provider inconsistent with the
+            claimed sender
+CONTEXT      Unusual or absent X-Mailer
+CONTEXT      No DMARC record on the sender's domain
+
+Not an indicator: SPF/DKIM/DMARC all passing. A compromised legitimate
+mailbox passes every check because it really is the legitimate sender. Auth
+passing plus a malicious payload means account takeover, which is an
+incident, not a phishing triage.
+
+===========================================================================
+PRETEXT AND CONTENT (human judgement; no tool detects these)
+===========================================================================
+STRONG      Requests credentials, an MFA approval, a payment, or gift cards
+STRONG      Impersonates leadership, IT, a vendor, or a known partner
+SUPPORTING  Creates urgency, fear, or a deadline
+SUPPORTING  Asks to move the conversation to another channel (WhatsApp, SMS,
+            personal email) - moves it off logged, filtered infrastructure
+SUPPORTING  Unexpected from this sender in this context
+SUPPORTING  "Enable Content" / "Enable Editing" instructions in the body
+DECISIVE    Password for an attached archive supplied in the message body
+              The password exists to defeat the mail gateway's scanner. That
+              is its only function.
+
+===========================================================================
+URL AND DOMAIN
+===========================================================================
+DECISIVE    urlscan.io or VirusTotal confirms a credential-harvest page
+DECISIVE    Confirmed C2 communication
+STRONG      Domain registered under 30 days ago
+STRONG      Typosquat or lookalike of a real brand (rn/m, 0/o, l/I, added
+            hyphens, brand demoted to a subdomain:
+            microsoft.com.login-verify.co is login-verify.co)
+STRONG      Punycode / IDN homograph hostname (xn-- prefix)
+STRONG      Landing page carries a password input field
+STRONG      HTML smuggling indicators (atob, fromCharCode, msSaveBlob,
+            new Blob) - a payload carried in the page and written to disk
+            by script, bypassing every download inspection
+STRONG      QR code carrying the link (quishing) - the link never appears as
+            text, so no mail filter and no text extraction sees it
+SUPPORTING  Meta-refresh or JavaScript redirect (curl -L follows neither)
+SUPPORTING  Shortener or wrapper hiding the destination
+SUPPORTING  Certificate issued the same day the domain was registered
+SUPPORTING  CT logs show sibling names issued in the same batch - the rest of
+            the campaign
+SUPPORTING  Reverse DNS lands in consumer hosting for a claimed corporate
+            login page
+CONTEXT      URL is percent-encoded or base64 in the query string
+CONTEXT      Free DV certificate (Let's Encrypt) - universal, means nothing
+CONTEXT      Long or ugly URL
+
+Not an indicator: valid HTTPS. It means the connection is encrypted, nothing
+about who is on the other end.
+
+===========================================================================
+OFFICE DOCUMENTS - MACROS
+===========================================================================
+DECISIVE    An auto-run trigger together with a shell or download keyword
+STRONG      Auto-run trigger alone:
+              AutoOpen, AutoExec, Auto_Open, Document_Open, Document_Close,
+              Workbook_Open, Workbook_Activate
+STRONG      Action keyword alone:
+              Shell, WScript.Shell, CreateObject, powershell, cmd.exe,
+              URLDownloadToFile, XMLHTTP, WinHttp, InternetOpen,
+              MacScript, curl, wget
+STRONG      P-code stomping: pcodedmp shows code olevba did not. The readable
+            VBA is a decoy; the compiled p-code is the payload.
+SUPPORTING  Obfuscation: StrReverse, Chr(), Base64, Xor, long string
+            concatenation, Environ
+SUPPORTING  XLM / Excel 4.0 macros present - they live in sheet formulas, not
+            vbaProject.bin, so olevba never sees them
+STRONG      XLM formulas using EXEC(), CALL(), or RUN() with shell commands
+SUPPORTING  Hidden or very-hidden macro sheets
+CONTEXT      vbaProject.bin present (macros exist - says nothing about intent)
+CONTEXT      Macro author or project name that looks generated
+
+Not an indicator: macros existing. Ordinary business documents use them
+constantly. It is the trigger-plus-action combination that is not innocent.
+
+===========================================================================
+OFFICE DOCUMENTS - EXTERNAL REFERENCES
+===========================================================================
+DECISIVE    DDE / DDEAUTO field - executes with no macro at all, so macro
+            security settings do not stop it
+DECISIVE    Embedded .exe, .scr, .hta, .lnk, or archive under embeddings/
+STRONG      attachedTemplate pointing off-box - template injection: the
+            payload lives in a remote .dotm fetched when the file opens
+STRONG      TargetMode="External" on an OLE object or template reference
+STRONG      UNC path (\\host\share) - leaks NTLM credentials over SMB on open
+STRONG      Excel WEBSERVICE() formula - an HTTP request from a spreadsheet
+SUPPORTING  TargetMode="External" on an ordinary hyperlink (extremely common
+            in legitimate documents; weight comes from where it points)
+SUPPORTING  externalLink entries in a workbook
+SUPPORTING  Auto-update field flags in word/settings.xml
+CONTEXT      Unusual content types in [Content_Types].xml
+
+===========================================================================
+PDF
+===========================================================================
+DECISIVE    /Launch present - can start a program
+DECISIVE    /OpenAction or /AA together with /JavaScript - code runs on open,
+            no click required
+STRONG      /JavaScript or /JS with a non-zero count
+STRONG      /EmbeddedFile carrying anything that is not an image or a font
+SUPPORTING  /AcroForm or /XFA (forms can specify JavaScript)
+SUPPORTING  /ObjStm - object streams can hide any of the above from a
+            keyword scan
+SUPPORTING  Hex-escaped tag names (/J#61vaScript) - obfuscation is its own
+            signal
+SUPPORTING  /URI entries pointing to a domain the document has no reason to
+            reference
+SUPPORTING  Encrypted with an empty owner password - encryption added to
+            defeat scanners rather than to protect anything
+CONTEXT      /URI present at all (any PDF with a link has one)
+
+===========================================================================
+RTF
+===========================================================================
+DECISIVE    Equation, OLE2Link, or Package object (rtfobj) - the shapes used
+            to deliver CVE-2017-11882 and its relatives
+DECISIVE    MZ header at a non-zero offset inside an extracted object - a
+            hidden PE
+STRONG      \objdata group present at all in an unexpected RTF
+SUPPORTING  Unusually large groups in rtfdump output
+SUPPORTING  Hex- or base64-encoded content inside object data
+CONTEXT      RTF format itself - legitimate, but rare enough in 2026 that an
+            unexpected one deserves a look
+
+RTF supports no macros, so a "no macros found" result means nothing here.
+
+===========================================================================
+ANY FILE
+===========================================================================
+DECISIVE    VirusTotal detections above zero
+DECISIVE    ClamAV signature hit
+STRONG      Real file type disagrees with the extension
+STRONG      Double extension: invoice.pdf.html, statement.xlsx.lnk
+STRONG      Content appended past the nominal end of the format (binwalk)
+STRONG      ssdeep similarity above 70% to a known-bad sample
+SUPPORTING  Password-protected and you were not given the password
+SUPPORTING  Modification date earlier than creation date
+SUPPORTING  Revision count above 10 - iterative evasion development
+SUPPORTING  Generic or absent Author / LastModifiedBy
+SUPPORTING  Unexpected generator application in the metadata
+SUPPORTING  xattr shows a where-from URL that does not match the claimed
+            source
+CONTEXT      VirusTotal 404 - the hash is simply unknown. Normal for internal
+            or new documents. Not clean, not dirty.
+CONTEXT      File size larger than the content seems to warrant
+
+===========================================================================
+POST-EXECUTION (if the file already ran - host triage, not triage)
+===========================================================================
+DECISIVE    Office application spawning bash, zsh, python, curl, or a shell
+DECISIVE    Persistence created: LaunchAgents, LaunchDaemons, login items
+DECISIVE    Outbound connection to a domain or IP in the case
+STRONG      Files written to ~/Library or /tmp by a document
+STRONG      Credential access indicators (LSASS on Windows, keychain on macOS)
+STRONG      Lateral movement tooling in the payload: net use, psexec,
+            wmic /node
+Go to ../modules/macos-host-triage.txt.
+
+===========================================================================
+ABSENCE OF EVIDENCE
+===========================================================================
+None of the following means a document or URL is clean. Each means a check
+could not run, which makes the verdict SUSPICIOUS rather than BENIGN.
+
+The scripts now enforce this rather than asking you to remember it. Each of
+these conditions emits an incomplete flag, and a case carrying one cannot
+score BENIGN no matter how quiet the rest of the report is:
+
+  CHAIN::FLAG::incomplete::tool-missing:rg
+  CHAIN::FLAG::incomplete::virustotal:rate-limited
+  CHAIN::FLAG::incomplete::no-touch:redirect-chain:host
+  CHAIN::FLAG::incomplete::doc:encrypted-unopenable
+
+Two of those deserve singling out because they used to be silent:
+
+  tool-missing:*            A missing tool makes a stage SKIP a check and
+                            carry on. Stage 2 with no ripgrep prints a
+                            confident-looking document report having never
+                            examined a single external relationship. Fix
+                            with triage/setup/preflight.sh.
+  virustotal:rate-limited   The free tier allows 4 lookups a minute. A
+                            chained run exceeds that easily, and the error
+                            reads almost exactly like "hash unknown" - which
+                            is why the script now distinguishes them.
+
+The conditions themselves:
+
+  - No URLs found in a document's static content. A URL built at runtime by
+    VBA string concatenation never appears as literal text.
+  - No links found in a PDF's text. Annotation and action links have no
+    visible text to extract.
+  - VirusTotal 404. Nobody has submitted it yet.
+  - ClamAV clean. Signature-based, and only as current as freshclam.
+  - urlscan.io shows a benign page. Cloaking serves scanners a different
+    page than victims.
+  - A page with no links. Fully JS-rendered pages need a headless browser.
+  - An archive you could not open.
+  - A login wall you could not get past.
+  - No macros in an RTF. RTF cannot have macros; that is not a finding.
+
+"I could not check" is not "it was clean." Record which check did not run.

@@ -1,0 +1,678 @@
+PFSENSE ADMINISTRATION AND SECURITY CHEAT SHEET
+===============================================
+
+Includes:
+- pfSense Administration
+- GUI Navigation
+- CLI Commands
+- Security Tasks
+- VPN Management
+- IKEv2 Configuration
+- Service Restarts
+- Troubleshooting
+- Console Access
+
+Applies To:
+- pfSense CE
+- pfSense Plus
+
+------------------------------------------------------------
+1. ACCESS METHODS
+------------------------------------------------------------
+
+GUI Access:
+https://<firewall-ip>
+
+Default:
+https://192.168.1.1
+
+SSH Access:
+ssh admin@192.168.1.1
+
+Enable SSH:
+System -> Advanced -> Admin Access
+
+Console:
+Physical VGA/HDMI console
+Serial console
+Hypervisor console
+
+------------------------------------------------------------
+2. DEFAULT LOGIN
+------------------------------------------------------------
+
+Username:
+admin
+
+Password:
+pfsense
+
+CHANGE IMMEDIATELY.
+
+------------------------------------------------------------
+3. BASIC SYSTEM INFORMATION
+------------------------------------------------------------
+
+GUI:
+Status -> Dashboard
+
+CLI:
+uname -a
+uptime
+top
+df -h
+
+------------------------------------------------------------
+4. INTERFACE MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+Interfaces -> Assignments
+
+Configure Interface:
+Interfaces -> LAN/WAN/OPT
+
+CLI:
+ifconfig
+
+Restart interface:
+ifconfig em0 down
+ifconfig em0 up
+
+CAUTION:
+Do not restart WAN remotely unless alternate access exists.
+
+------------------------------------------------------------
+5. VLAN CONFIGURATION
+------------------------------------------------------------
+
+GUI:
+Interfaces -> Assignments -> VLANs
+
+Create VLAN:
+Interfaces -> Assignments -> VLANs -> Add
+
+Assign VLAN:
+Interfaces -> Assignments
+
+CLI:
+ifconfig vlan10 create
+ifconfig vlan10 vlan 10 vlandev em1
+
+------------------------------------------------------------
+6. DHCP MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+Services -> DHCP Server
+
+Static Mappings:
+Services -> DHCP Server -> Static Mappings
+
+CLI:
+cat /var/dhcpd/var/db/dhcpd.leases
+
+Restart DHCP:
+service isc-dhcpd restart
+
+Minimal interruption:
+Existing leases remain active.
+
+------------------------------------------------------------
+7. DNS MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+Services -> DNS Resolver
+
+DNS Forwarder:
+Services -> DNS Forwarder
+
+CLI:
+drill google.com
+nslookup google.com
+
+Restart DNS Resolver:
+service unbound restart
+
+------------------------------------------------------------
+8. FIREWALL RULES
+------------------------------------------------------------
+
+GUI:
+Firewall -> Rules
+
+Tabs:
+- WAN
+- LAN
+- VLANs
+- Floating
+
+Common Tasks:
+- Block IPs
+- Allow VPN traffic
+- GeoIP filtering
+- Port restrictions
+
+CLI:
+pfctl -sr
+
+Reload firewall:
+pfctl -f /tmp/rules.debug
+
+------------------------------------------------------------
+9. NAT CONFIGURATION
+------------------------------------------------------------
+
+GUI:
+Firewall -> NAT
+
+Types:
+- Port Forward
+- 1:1 NAT
+- Outbound NAT
+
+Reload NAT:
+pfctl -f /tmp/rules.debug
+
+------------------------------------------------------------
+10. PORT FORWARDING
+------------------------------------------------------------
+
+GUI:
+Firewall -> NAT -> Port Forward
+
+Example:
+WAN TCP 443 -> 192.168.1.10:443
+
+------------------------------------------------------------
+11. ALIAS MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+Firewall -> Aliases
+
+Use Cases:
+- Blocklists
+- Country IP ranges
+- Management hosts
+- VPN clients
+
+Security Tip:
+Use aliases instead of individual IP rules.
+
+------------------------------------------------------------
+12. SECURITY TASKS
+------------------------------------------------------------
+
+------------------------------------------------------------
+A. ENABLE MFA
+------------------------------------------------------------
+
+GUI:
+System -> User Manager -> Authentication Servers
+
+Configure:
+- TOTP
+- RADIUS
+- LDAP
+
+------------------------------------------------------------
+B. BLOCK BRUTE FORCE ATTACKS
+------------------------------------------------------------
+
+Install:
+pfBlockerNG
+
+GUI:
+System -> Package Manager -> Available Packages
+
+Recommended:
+- pfBlockerNG-devel
+- Suricata
+
+------------------------------------------------------------
+C. GEOIP BLOCKING
+------------------------------------------------------------
+
+GUI:
+Firewall -> pfBlockerNG -> IP
+
+Tasks:
+- Block hostile countries
+- Block TOR
+- Block bogons
+
+------------------------------------------------------------
+D. INTRUSION DETECTION
+------------------------------------------------------------
+
+Install:
+Suricata or Snort
+
+GUI:
+Services -> Suricata
+
+Common Tasks:
+- Enable IDS
+- Enable IPS inline mode
+- Configure ET rules
+- Configure logging
+
+------------------------------------------------------------
+E. LOCK DOWN MANAGEMENT ACCESS
+------------------------------------------------------------
+
+Restrict GUI:
+Firewall -> Rules -> LAN
+
+Allow only:
+- Admin workstation
+- VPN subnet
+
+Disable WAN GUI:
+System -> Advanced -> Admin Access
+
+------------------------------------------------------------
+F. ENABLE LOGGING
+------------------------------------------------------------
+
+GUI:
+Status -> System Logs
+
+Remote Syslog:
+Status -> System Logs -> Settings
+
+------------------------------------------------------------
+G. CONFIGURE BACKUPS
+------------------------------------------------------------
+
+GUI:
+Diagnostics -> Backup & Restore
+
+Recommended:
+- Automatic backups
+- Encrypted backups
+
+------------------------------------------------------------
+13. PACKAGE MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+System -> Package Manager
+
+Common Packages:
+- pfBlockerNG
+- Suricata
+- Snort
+- OpenVPN Client Export
+- WireGuard
+
+------------------------------------------------------------
+14. VPN MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+VPN
+
+Types:
+- OpenVPN
+- IPsec
+- WireGuard
+- L2TP
+
+------------------------------------------------------------
+15. IKEv2 VPN CONFIGURATION
+------------------------------------------------------------
+
+GUI:
+VPN -> IPsec
+
+------------------------------------------------------------
+STEP 1 — ENABLE IPSEC
+------------------------------------------------------------
+
+VPN -> IPsec -> Tunnels
+
+Enable:
+[x] Enable IPsec
+
+------------------------------------------------------------
+STEP 2 — CREATE PHASE 1
+------------------------------------------------------------
+
+VPN -> IPsec -> Tunnels -> Add P1
+
+Settings:
+Key Exchange Version:
+IKEv2
+
+Internet Protocol:
+IPv4
+
+Interface:
+WAN
+
+Authentication:
+Mutual PSK or Certificates
+
+Encryption:
+AES256-GCM
+
+Hash:
+SHA256
+
+DH Group:
+14 or higher
+
+Lifetime:
+28800
+
+------------------------------------------------------------
+STEP 3 — CREATE PHASE 2
+------------------------------------------------------------
+
+VPN -> IPsec -> Tunnels -> Show Phase 2 Entries -> Add P2
+
+Mode:
+Tunnel IPv4
+
+Local Network:
+LAN subnet
+
+Remote Network:
+Remote subnet
+
+Encryption:
+AES256-GCM
+
+PFS:
+14 or higher
+
+------------------------------------------------------------
+STEP 4 — FIREWALL RULES
+------------------------------------------------------------
+
+Allow:
+UDP 500
+UDP 4500
+ESP
+
+GUI:
+Firewall -> Rules -> WAN
+
+------------------------------------------------------------
+STEP 5 — MOBILE IKEV2 ACCESS
+------------------------------------------------------------
+
+VPN -> IPsec -> Mobile Clients
+
+Enable:
+[x] Enable IPsec Mobile Client Support
+
+Authentication:
+EAP-MSCHAPv2
+
+Virtual Address Pool:
+10.10.10.0/24
+
+DNS:
+Internal DNS servers
+
+------------------------------------------------------------
+STEP 6 — USER CREATION
+------------------------------------------------------------
+
+System -> User Manager
+
+Add:
+VPN users
+
+------------------------------------------------------------
+STEP 7 — EXPORT CERTIFICATES
+------------------------------------------------------------
+
+System -> Cert Manager
+
+Tasks:
+- Export CA
+- Export user certificates
+
+------------------------------------------------------------
+STEP 8 — RESTART IPSEC
+------------------------------------------------------------
+
+CLI:
+service strongswan restart
+
+GUI:
+Status -> Services
+
+Minimal interruption:
+Existing tunnels renegotiate automatically.
+
+------------------------------------------------------------
+16. OPENVPN MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+VPN -> OpenVPN
+
+Export Clients:
+VPN -> OpenVPN -> Client Export
+
+------------------------------------------------------------
+17. WIREGUARD MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+VPN -> WireGuard
+
+Tasks:
+- Create tunnel
+- Add peers
+- Configure allowed IPs
+
+------------------------------------------------------------
+18. CERTIFICATE MANAGEMENT
+------------------------------------------------------------
+
+GUI:
+System -> Cert Manager
+
+Tasks:
+- Create internal CA
+- Issue VPN certificates
+- Import certificates
+
+------------------------------------------------------------
+19. SERVICE RESTARTS
+------------------------------------------------------------
+
+Restart Web GUI:
+service nginx restart
+
+Restart DNS:
+service unbound restart
+
+Restart DHCP:
+service isc-dhcpd restart
+
+Restart IPsec:
+service strongswan restart
+
+Restart OpenVPN:
+service openvpn restart
+
+Restart packet filter:
+pfctl -f /tmp/rules.debug
+
+------------------------------------------------------------
+20. SAFE SERVICE RESTARTS
+------------------------------------------------------------
+
+Prefer:
+Restart individual services
+
+Avoid:
+service netif restart
+
+CAUTION:
+Restarting networking remotely may disconnect access.
+
+------------------------------------------------------------
+21. BACKUP AND RESTORE
+------------------------------------------------------------
+
+GUI:
+Diagnostics -> Backup & Restore
+
+CLI Backup:
+cp /cf/conf/config.xml /root/backup-config.xml
+
+Restore:
+Upload config.xml
+
+------------------------------------------------------------
+22. LOG FILES
+------------------------------------------------------------
+
+GUI:
+Status -> System Logs
+
+CLI:
+clog /var/log/system.log
+clog /var/log/filter.log
+
+Live logs:
+tail -f /var/log/system.log
+
+------------------------------------------------------------
+23. TROUBLESHOOTING
+------------------------------------------------------------
+
+Ping:
+ping 8.8.8.8
+
+Traceroute:
+traceroute 8.8.8.8
+
+Packet Capture:
+Diagnostics -> Packet Capture
+
+CLI:
+tcpdump -i em0
+
+Routing table:
+netstat -rn
+
+ARP table:
+arp -a
+
+Check VPN:
+ipsec statusall
+
+------------------------------------------------------------
+24. CONSOLE ACCESS
+------------------------------------------------------------
+
+Default Serial Settings:
+115200 8N1
+
+No flow control.
+
+------------------------------------------------------------
+WINDOWS SERIAL ACCESS
+------------------------------------------------------------
+
+Use:
+PuTTY
+
+Settings:
+COM Port
+115200 baud
+8 data bits
+No parity
+1 stop bit
+No flow control
+
+------------------------------------------------------------
+LINUX SERIAL ACCESS
+------------------------------------------------------------
+
+Identify adapter:
+dmesg | grep tty
+
+Connect:
+sudo screen /dev/ttyUSB0 115200
+
+Exit:
+CTRL+A
+K
+Y
+
+------------------------------------------------------------
+25. SAFE CHANGE MANAGEMENT
+------------------------------------------------------------
+
+1. Backup config
+2. Make incremental changes
+3. Test connectivity
+4. Monitor logs
+5. Save changes
+6. Document modifications
+
+------------------------------------------------------------
+26. HIGH RISK COMMANDS
+------------------------------------------------------------
+
+Avoid remotely:
+
+reboot
+service netif restart
+ifconfig em0 down
+factory reset
+
+------------------------------------------------------------
+27. BEST PRACTICES
+------------------------------------------------------------
+
+- Use MFA
+- Restrict GUI access
+- Use VPN for management
+- Disable WAN management
+- Enable IDS/IPS
+- Use GeoIP filtering
+- Backup before upgrades
+- Keep firmware updated
+- Monitor logs daily
+- Use aliases extensively
+- Use certificate-based VPNs
+- Restrict outbound traffic where possible
+
+------------------------------------------------------------
+28. EMERGENCY COMMANDS
+------------------------------------------------------------
+
+Restart firewall:
+pfctl -f /tmp/rules.debug
+
+Restart IPsec:
+service strongswan restart
+
+Restart DNS:
+service unbound restart
+
+Check interfaces:
+ifconfig
+
+Check routes:
+netstat -rn
+
+Packet capture:
+tcpdump -i em0
+
+------------------------------------------------------------
+END OF DOCUMENT
+------------------------------------------------------------
+

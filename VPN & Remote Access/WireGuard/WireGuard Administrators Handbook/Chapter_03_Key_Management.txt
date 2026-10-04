@@ -1,0 +1,167 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 3 KEY MANAGEMENT
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+WireGuard security depends entirely on protecting private keys and
+maintaining an accurate inventory of peers. This chapter covers the
+complete lifecycle of WireGuard keys.
+
+===============================================================================
+2. KEY TYPES
+===============================================================================
+
+Private Key - Never shared. - Stored only on the local device. - Protect
+with file permissions (600).
+
+Public Key - Shared with peers. - Used to identify a device. - Not
+secret.
+
+===============================================================================
+3. GENERATING KEYS
+===============================================================================
+
+Create keys
+
+wg genkey > private.key wg pubkey < private.key > public.key
+
+One-liner
+
+wg genkey | tee private.key | wg pubkey > public.key
+
+Permissions
+
+chmod 600 private.key chmod 600 /etc/wireguard/*.conf
+
+===============================================================================
+4. INVENTORY MANAGEMENT
+===============================================================================
+
+Maintain a peer inventory including:
+
+Hostname Owner Device Type Public Key VPN Address Allowed Networks Date
+Created Last Rotated Business Owner
+
+Example
+
+Hostname: admin-laptop-01 VPN IP: 10.100.0.25 Owner: Alice Smith
+AllowedIPs: 10.60.40.0/24
+
+===============================================================================
+5. KEY ROTATION
+===============================================================================
+
+Recommended schedule
+
+High security Every 90 days Standard Every 180 days Maximum Annually
+
+Rotation procedure
+
+1.  Generate new keypair.
+2.  Update server peer.
+3.  Update client configuration.
+4.  Restart tunnel.
+5.  Verify handshake.
+6.  Archive change record.
+
+===============================================================================
+6. COMPROMISED KEYS
+===============================================================================
+
+Indicators
+
+-   Lost laptop
+-   Malware infection
+-   Unauthorized configuration access
+-   Suspected credential theft
+
+Response
+
+1.  Remove peer from server.
+2.  Generate replacement keys.
+3.  Deploy new configuration.
+4.  Verify old peer cannot connect.
+5.  Document the incident.
+
+===============================================================================
+7. BACKUPS
+===============================================================================
+
+Back up:
+
+/etc/wireguard/ Firewall configuration Routing configuration
+
+Never store private keys in unsecured locations.
+
+===============================================================================
+8. NAMING STANDARDS
+===============================================================================
+
+Servers
+
+wg-gateway-primary wg-gateway-dr
+
+Clients
+
+alice-laptop bob-macbook ops-workstation
+
+Avoid generic names such as:
+
+laptop1 server vpnclient
+
+===============================================================================
+9. QR PROVISIONING
+===============================================================================
+
+Generate QR code
+
+qrencode -t ansiutf8 < client.conf
+
+Useful for:
+
+-   iPhone
+-   Android
+-   Tablets
+
+Protect QR codes because they contain private keys.
+
+===============================================================================
+10. AUDITING
+===============================================================================
+
+Monthly
+
+-   Remove stale peers
+-   Verify peer ownership
+-   Review AllowedIPs
+-   Verify documentation
+-   Confirm successful backups
+
+===============================================================================
+11. TROUBLESHOOTING
+===============================================================================
+
+Symptom: Handshake fails after rotation
+
+Check: - Correct public key installed - Correct private key on client -
+Restart tunnel - Firewall unchanged
+
+Useful commands
+
+wg wg show wg showconf wg0
+
+===============================================================================
+12. BEST PRACTICES
+===============================================================================
+
+-   One keypair per device.
+-   Never reuse private keys.
+-   Rotate keys regularly.
+-   Keep a documented peer inventory.
+-   Remove inactive peers immediately.
+-   Review AllowedIPs during every change.
+-   Treat configuration files as sensitive.
+-   Include key rotation in disaster recovery testing.
+
+END OF CHAPTER 3

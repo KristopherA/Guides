@@ -1,0 +1,276 @@
+VT-CLI USAGE GUIDE
+VirusTotal Command-Line Interface — IR and Malware Analysis Reference
+==========================================================================
+
+This guide covers operational use of vt-cli for incident response,
+email triage, malware analysis, and IOC hunting in your environment.
+
+Assumes vt-cli is installed and API key is configured.
+See vt-cli-install-setup.txt for installation steps.
+
+==========================================================================
+SECTION 1 — FILE AND HASH LOOKUPS
+==========================================================================
+
+Look up a file by SHA256 hash:
+  vt file <sha256hash>
+
+Look up a file by MD5 or SHA1:
+  vt file <md5hash>
+  vt file <sha1hash>
+
+Scan a file (submits to VT, waits for result):
+  vt scan file /path/to/suspicious.pdf
+
+Get scan result after submission (use the ID returned by scan):
+  vt analysis <analysis_id>
+
+Quick detection summary only (cuts output noise):
+  vt file <sha256> --include=last_analysis_stats,reputation,tags
+
+Example — check a file from your existing triage workflow:
+  SHA=$(shasum -a 256 /path/to/file.doc | awk '{print $1}')
+  vt file $SHA --include=last_analysis_stats
+
+Output explained:
+  last_analysis_stats:
+    malicious: 0        # Number of engines flagging as malicious
+    suspicious: 1       # Engines calling it suspicious
+    undetected: 68      # Clean
+    harmless: 0
+  reputation: -5        # Negative = community flagged as bad
+  tags: ["doc", "macro"] # File type tags
+
+==========================================================================
+SECTION 2 — URL LOOKUPS
+==========================================================================
+
+Check a URL:
+  vt url https://suspicious-domain.com/payload
+
+Get just the verdict:
+  vt url https://example.com --include=last_analysis_stats,reputation
+
+Get the IP that served the URL:
+  vt url last_serving_ip_address https://example.com
+
+Get the final redirect target:
+  vt url last_final_url https://short.link/abc
+
+Batch check URLs from a file (one URL per line):
+  cat urls.txt | xargs -I{} vt url {} --include=last_analysis_stats
+
+==========================================================================
+SECTION 3 — IP ADDRESS LOOKUPS
+==========================================================================
+
+Check an IP:
+  vt ip 8.8.8.8
+
+Get country and reputation only:
+  vt ip 1.2.3.4 --include=country,reputation,last_analysis_stats
+
+Get all URLs hosted at an IP:
+  vt ip urls 1.2.3.4
+
+Get all files downloaded from an IP:
+  vt ip files 1.2.3.4
+
+Use in IR — check an IP seen in Graylog alerts:
+  vt ip <suspicious_ip> --include=reputation,last_analysis_stats,country,asn
+
+==========================================================================
+SECTION 4 — DOMAIN LOOKUPS
+==========================================================================
+
+Check a domain:
+  vt domain suspicious-domain.com
+
+Get DNS resolution history:
+  vt domain resolutions suspicious-domain.com
+
+Get subdomains:
+  vt domain subdomains suspicious-domain.com
+
+Get files/URLs associated with the domain:
+  vt domain files suspicious-domain.com
+  vt domain urls suspicious-domain.com
+
+Quick reputation check:
+  vt domain suspicious-domain.com --include=reputation,last_analysis_stats,categories
+
+==========================================================================
+SECTION 5 — BATCH IOC CHECKING
+==========================================================================
+
+Check a list of hashes from a file (one hash per line):
+  while IFS= read -r hash; do
+    echo "=== $hash ==="
+    vt file "$hash" --include=last_analysis_stats,tags 2>/dev/null || echo "Not found"
+    sleep 15   # Respect free tier rate limit (4/min)
+  done < hashes.txt
+
+Check multiple IPs:
+  while IFS= read -r ip; do
+    echo "=== $ip ==="
+    vt ip "$ip" --include=reputation,last_analysis_stats,country 2>/dev/null
+    sleep 15
+  done < ips.txt
+
+Export results to JSON for Graylog or further processing:
+  vt file <sha256> --format json > vt_result.json
+  vt ip <ip> --format json >> ioc_report.json
+
+Export as CSV (useful for incident documentation):
+  vt file <sha256> --format csv --include=last_analysis_stats.**
+
+==========================================================================
+SECTION 6 — EMAIL TRIAGE INTEGRATION
+==========================================================================
+
+Your suspicious email procedure involves:
+  - Extracting attachments
+  - Hashing them
+  - Manual VirusTotal check
+
+Replace the manual step:
+
+  # Hash the attachment
+  HASH=$(shasum -a 256 attachment.docx | awk '{print $1}')
+  echo "Hash: $HASH"
+
+  # VT lookup
+  vt file "$HASH" --include=last_analysis_stats,reputation,tags,type_description
+
+  # Also check any extracted URLs
+  vt url "https://extracted-url-from-email.com" --include=last_analysis_stats,reputation
+
+  # Check the sender domain if suspicious
+  vt domain "senderdomain.com" --include=reputation,last_analysis_stats,categories
+
+==========================================================================
+SECTION 7 — MALWARE ANALYSIS INTEGRATION
+==========================================================================
+
+Integrate into your office_malware_check.sh workflow.
+After the existing hash step, add:
+
+  # VirusTotal check (add after shasum lines in the script)
+  VT_RESULT=$(vt file "$SHA256" --include=last_analysis_stats,tags,type_description 2>/dev/null)
+  if [ -n "$VT_RESULT" ]; then
+    echo "=== VirusTotal Result ===" | tee -a "$REPORT"
+    echo "$VT_RESULT" | tee -a "$REPORT"
+  else
+    echo "VT: Hash not found in database" | tee -a "$REPORT"
+  fi
+
+Check a file not yet in VT (submits it):
+  CAUTION: Only submit files you are authorized to share externally.
+  Do not submit files containing sensitive data.
+
+  vt scan file /analysis/samples/suspicious.exe
+
+==========================================================================
+SECTION 8 — INCIDENT RESPONSE WORKFLOWS
+==========================================================================
+
+When Graylog alerts on a suspicious process hash:
+  vt file <process_sha256> --include=last_analysis_stats,tags,names,reputation
+
+When Graylog alerts on outbound connection to unknown IP:
+  vt ip <destination_ip> --include=reputation,last_analysis_stats,country,asn
+  vt ip urls <destination_ip>    # See what URLs were hosted there
+
+When investigating a phishing domain from email headers:
+  vt domain <domain> --include=reputation,last_analysis_stats,categories,creation_date
+  vt domain resolutions <domain>  # Historical IP associations
+
+When a new file appears on a Linux host (UAC artifact):
+  SHA=$(sha256sum /path/to/file | awk '{print $1}')
+  vt file $SHA --include=last_analysis_stats,reputation,tags,names
+
+==========================================================================
+SECTION 9 — OUTPUT FILTERING REFERENCE
+==========================================================================
+
+Use --include (-i) to filter output to only the fields you need.
+Use --exclude (-x) to remove fields from full output.
+
+Useful field paths:
+
+  last_analysis_stats           Detection counts (malicious/suspicious/clean)
+  last_analysis_stats.malicious Count of engines flagging as malicious
+  reputation                    Community reputation score (negative = bad)
+  tags                          File type and behavior tags
+  names                         Known filenames for this hash
+  type_description              File type (e.g., "PDF document")
+  country                       Country (for IPs)
+  asn                           Autonomous system number (for IPs)
+  categories                    Domain category (e.g., "malware", "phishing")
+  creation_date                 Domain registration date
+
+Wildcards:
+  last_analysis_results.**      All engine results (verbose)
+  last_analysis_results.*.result  Just the verdict from each engine
+
+Example — terse summary for IR:
+  vt file <hash> --include=last_analysis_stats,reputation,tags,names
+
+Example — full engine breakdown:
+  vt file <hash> --include=last_analysis_results.**
+
+==========================================================================
+SECTION 10 — YARA AND LIVEHUNT (PREMIUM)
+==========================================================================
+
+These features require a premium/enterprise API key.
+
+Upload a YARA rule to LiveHunt (monitors all new VT submissions):
+  vt hunting ruleset create MyRule --data @rule.yar
+
+List your rulesets:
+  vt hunting ruleset list
+
+Start a RetroHunt (search historical VT corpus):
+  vt retrohunt start --rules @rule.yar
+
+Get RetroHunt results:
+  vt retrohunt matches <job_id>
+
+==========================================================================
+SECTION 11 — RATE LIMIT MANAGEMENT
+==========================================================================
+
+Free tier: 4 requests/minute, 500 requests/day
+
+For batch scripts, add sleep to avoid hitting the rate limit:
+  sleep 15    # 4 requests/min = 1 request per 15 seconds
+
+Check if you are near the daily limit:
+  vt account --include=quota_usage
+
+When rate limited, the error is:
+  "Error: quota exceeded"
+  Wait 1 minute (rate) or until midnight UTC (daily).
+
+==========================================================================
+QUICK REFERENCE CARD
+==========================================================================
+
+  vt file <hash>                   Hash lookup
+  vt scan file <path>              Submit file for scanning
+  vt url <url>                     URL lookup
+  vt ip <ip>                       IP lookup
+  vt domain <domain>               Domain lookup
+  vt ip urls <ip>                  URLs hosted at IP
+  vt domain resolutions <domain>   Historical DNS
+  vt domain subdomains <domain>    Subdomain enumeration
+  vt search "positives:5+ type:pdf" Search VT Intelligence (premium)
+  vt file <hash> --format json     JSON output
+  vt file <hash> --format csv      CSV output
+  vt file <hash> --include=x,y     Filter fields
+  vt --proxy http://proxy:port     Use proxy
+
+==========================================================================
+END OF GUIDE
+==========================================================================

@@ -1,0 +1,64 @@
+MYSQL REPLICATION PATCHING PROCEDURE (UBUNTU 24.04 / ROW-BASED)
+================================================================
+Date: 2026-04-15
+Target: 2-Server Setup (Source & Replica)
+================================================================
+
+[PHASE 1: REPLICA (SLAVE) PATCHING]
+----------------------------------
+1. STOP REPLICATION (SQL)
+   Command: mysql -u root -p -e "STOP SLAVE;"
+   Success: Query OK, 0 rows affected
+
+2. UPDATE OS & PACKAGES (BASH)
+   Command: sudo apt update && sudo apt dist-upgrade -y
+   Success: "0 upgraded, 0 newly installed... 0 not upgraded"
+
+3. REBOOT (BASH)
+   Command: sudo reboot
+   Success: Server terminates session and reboots successfully.
+
+4. VERIFY SERVICE & RESUME (SQL)
+   Check:   sudo systemctl status mysql (Look for "active (running)")
+   Command: mysql -u root -p -e "START SLAVE;"
+   Success: Query OK, 0 rows affected
+
+5. VERIFY SYNC (SQL)
+   Command: mysql -u root -p -e "SHOW SLAVE STATUS\G"
+   Success Indicators:
+     - Slave_IO_Running: Yes
+     - Slave_SQL_Running: Yes
+     - Seconds_Behind_Master: 0
+
+
+[PHASE 2: SOURCE (MASTER) PATCHING]
+----------------------------------
+1. FLUSH & LOCK TABLES (SQL)
+   Command: mysql -u root -p -e "FLUSH TABLES WITH READ LOCK;"
+   Success: Query OK, 0 rows affected
+
+2. UPDATE OS & PACKAGES (BASH)
+   Command: sudo apt update && sudo apt dist-upgrade -y
+   Success: "0 upgraded, 0 newly installed... 0 not upgraded"
+
+3. REBOOT (BASH)
+   Command: sudo reboot
+   Success: Server terminates session and reboots successfully.
+   Note: The Read Lock is automatically released on service restart.
+
+4. VERIFY MASTER HEALTH (SQL)
+   Command: mysql -u root -p -e "SHOW MASTER STATUS;"
+   Success: Displays a non-zero Position and current binary log file.
+
+
+[FINAL VERIFICATION (RUN ON REPLICA)]
+------------------------------------
+Command: mysql -u root -p -e "SHOW SLAVE STATUS\G" | grep -E "Running:|Behind"
+
+EXPECTED OUTPUT:
+   Slave_IO_Running: Yes
+   Slave_SQL_Running: Yes
+   Seconds_Behind_Master: 0
+
+================================================================
+END OF PROCEDURE

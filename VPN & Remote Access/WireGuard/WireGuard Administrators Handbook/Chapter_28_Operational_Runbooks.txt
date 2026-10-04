@@ -1,0 +1,187 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 28 OPERATIONAL
+RUNBOOKS
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter provides repeatable Standard Operating Procedures (SOPs)
+for the most common WireGuard administrative tasks. Follow your
+organization’s change management process before making production
+changes.
+
+===============================================================================
+2. DAILY OPERATIONS
+===============================================================================
+
+Daily Checklist
+
+[ ] Review monitoring dashboard [ ] Check tunnel status: wg show [ ]
+Review stale handshakes [ ] Review firewall logs [ ] Review system
+alerts [ ] Verify backup completion
+
+===============================================================================
+3. PROVISION A NEW USER
+===============================================================================
+
+1.  Obtain approved access request.
+2.  Allocate the next VPN address.
+3.  Generate a unique key pair.
+4.  Create the client configuration.
+5.  Add a new [Peer] section to the server.
+6.  Deploy the client configuration securely.
+7.  Verify handshake.
+8.  Update peer inventory.
+9.  Close the change request.
+
+===============================================================================
+4. REVOKE USER ACCESS
+===============================================================================
+
+1.  Remove the peer from the server.
+2.  Restart or synchronize the configuration.
+3.  Verify the peer cannot reconnect.
+4.  Remove configuration from inventory.
+5.  Record the reason for removal.
+
+===============================================================================
+5. ROTATE KEYS
+===============================================================================
+
+1.  Generate a new key pair.
+2.  Update the server public key.
+3.  Deploy the new client configuration.
+4.  Restart the tunnel.
+5.  Verify connectivity.
+6.  Archive the old configuration securely.
+
+===============================================================================
+6. ADD A NEW SITE
+===============================================================================
+
+1.  Allocate VPN addressing.
+2.  Create server and branch keys.
+3.  Configure routing.
+4.  Configure firewall rules.
+5.  Test connectivity.
+6.  Update network documentation.
+
+===============================================================================
+7. UPGRADE PROCEDURE
+===============================================================================
+
+Before
+
+[ ] Backup configuration [ ] Export firewall rules [ ] Verify monitoring
+[ ] Notify stakeholders
+
+Upgrade
+
+-   Install updates
+-   Restart services if required
+-   Validate tunnel
+
+After
+
+-   Confirm handshakes
+-   Confirm routing
+-   Confirm application access
+
+===============================================================================
+8. RECOVER A FAILED GATEWAY
+===============================================================================
+
+1.  Provision replacement server.
+2.  Install WireGuard.
+3.  Restore configuration.
+4.  Restore firewall.
+5.  Enable forwarding.
+6.  Start wg-quick.
+7.  Validate all peers.
+
+===============================================================================
+9. TROUBLESHOOTING RUNBOOK
+===============================================================================
+
+No handshake
+
+-   Check Internet
+-   Check UDP/51820
+-   Check endpoint
+-   Check keys
+
+Handshake but no traffic
+
+-   AllowedIPs
+-   Routes
+-   Firewall
+-   IP forwarding
+
+Application unavailable
+
+-   DNS
+-   Service status
+-   Host firewall
+-   TLS
+
+===============================================================================
+10. CHANGE MANAGEMENT
+===============================================================================
+
+For every change document:
+
+-   Date
+-   Administrator
+-   Change request
+-   Reason
+-   Rollback plan
+-   Validation results
+
+===============================================================================
+11. MAINTENANCE SCHEDULE
+===============================================================================
+
+Weekly
+
+-   Review logs
+-   Review peers
+-   Verify backups
+
+Monthly
+
+-   Audit AllowedIPs
+-   Test restore
+-   Review firewall
+
+Quarterly
+
+-   Test failover
+-   Rotate keys (if policy requires)
+-   Review documentation
+
+Annually
+
+-   Disaster recovery exercise
+-   Security review
+-   Capacity review
+
+===============================================================================
+12. OPERATIONAL BEST PRACTICES
+===============================================================================
+
+-   Standardize procedures.
+-   Automate repetitive tasks.
+-   Record every production change.
+-   Test changes in a lab.
+-   Maintain current documentation.
+-   Keep peer inventory accurate.
+-   Review access regularly.
+
+===============================================================================
+13. RUNBOOK CHECKLIST
+===============================================================================
+
+[ ] SOP followed [ ] Validation completed [ ] Documentation updated [ ]
+Monitoring verified [ ] Rollback available [ ] Change closed
+
+END OF CHAPTER 28

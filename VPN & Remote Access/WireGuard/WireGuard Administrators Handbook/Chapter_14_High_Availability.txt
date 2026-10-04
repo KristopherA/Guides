@@ -1,0 +1,168 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 14 HIGH
+AVAILABILITY
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+High Availability (HA) minimizes downtime by providing redundant
+WireGuard gateways, network paths, and supporting infrastructure. This
+chapter focuses on active/passive deployments, health monitoring, and
+failover testing.
+
+===============================================================================
+2. HA PRINCIPLES
+===============================================================================
+
+Eliminate single points of failure:
+
+-   VPN gateway
+-   Internet connection
+-   Power
+-   DNS
+-   Firewall
+-   Authentication
+-   Monitoring
+
+===============================================================================
+3. ACTIVE/PASSIVE DESIGN
+===============================================================================
+
+                Internet
+                    |
+              +-------------+
+              |  Firewall   |
+              +-------------+
+                    |
+             Virtual IP (VIP)
+                    |
+          +---------+---------+
+          |                   |
+      WG-Primary         WG-Secondary
+
+Only one gateway actively owns the VIP.
+
+===============================================================================
+4. KEEPALIVED / VRRP
+===============================================================================
+
+Keepalived implements VRRP to move a Virtual IP between servers.
+
+Typical workflow
+
+1.  Primary healthy
+2.  Primary fails
+3.  Secondary claims VIP
+4.  Clients reconnect automatically
+
+Monitor status
+
+systemctl status keepalived
+
+===============================================================================
+5. CONFIGURATION SYNCHRONIZATION
+===============================================================================
+
+Keep identical copies of:
+
+/etc/wireguard/ Firewall rules Routing tables DNS settings
+
+Recommended methods
+
+-   Git
+-   Ansible
+-   rsync over SSH
+-   Configuration management platform
+
+===============================================================================
+6. MULTIPLE INTERNET CONNECTIONS
+===============================================================================
+
+Examples
+
+ISP-A | Primary Gateway
+
+ISP-B | Secondary Gateway
+
+Combine with Policy-Based Routing for resilient outbound connectivity.
+
+===============================================================================
+7. HEALTH CHECKS
+===============================================================================
+
+Verify:
+
+wg show wg show latest-handshakes ip addr ip route ping upstream gateway
+systemctl status wg-quick@wg0
+
+Alert when:
+
+-   Tunnel down
+-   Handshake stale
+-   Packet loss increases
+-   VIP changes owner unexpectedly
+
+===============================================================================
+8. FAILOVER TESTING
+===============================================================================
+
+Planned test
+
+1.  Record active gateway
+2.  Disconnect primary
+3.  Verify VIP moves
+4.  Confirm tunnel reconnects
+5.  Test application access
+6.  Restore primary
+7.  Confirm expected ownership
+
+Document every test.
+
+===============================================================================
+9. DISASTER RECOVERY
+===============================================================================
+
+Back up:
+
+-   WireGuard configuration
+-   Keys
+-   Firewall rules
+-   Routing configuration
+-   DNS records
+-   Keepalived configuration
+
+Store encrypted backups offsite.
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+VIP does not move
+
+Check: - keepalived service - VRRP advertisements - Firewall - Interface
+state
+
+Tunnel reconnects slowly
+
+Check: - DNS - Endpoint - PersistentKeepalive - Routing
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Test failover quarterly.
+-   Monitor handshake age continuously.
+-   Keep standby systems fully patched.
+-   Automate configuration synchronization.
+-   Avoid manual changes on only one node.
+-   Include HA testing in disaster recovery exercises.
+
+===============================================================================
+12. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] Redundant gateways installed [ ] VIP configured [ ] Configuration
+synchronized [ ] Firewall synchronized [ ] Monitoring enabled [ ]
+Alerting configured [ ] Failover tested [ ] Recovery documented
+
+END OF CHAPTER 14

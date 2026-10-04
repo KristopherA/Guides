@@ -1,0 +1,90 @@
+LOCAL DOCKER SERVICES AND ONE-OFF TOOLS
+Part of: URL & Document Triage (see ../WORKFLOW.txt)
+Last reviewed: 2026-09-04
+
+Containerised services worth running locally rather than sending your queries
+to somebody else's site, plus a few standalone commands that have no better
+home. None of these is required by the four triage stages.
+
+===========================================================================
+web-check - URL and domain recon in one page
+===========================================================================
+Runs locally, so lookups do not go through a third-party site with your
+query in their logs.
+
+  docker run -p 3000:3000 lissy93/web-check
+  http://localhost:3000/check
+
+  Used at   triage stage 1, as a fast first pass. It covers DNS, headers,
+            TLS, redirects, and reputation in one view.
+  Not a     substitute for stage 1. It does not decode punycode, follow
+            nesting into documents, or check CT-log siblings, and it will
+            fetch the page - so treat the result as reconnaissance, not as
+            the triage record.
+
+===========================================================================
+ohmypcap - PCAP analysis in a browser
+===========================================================================
+  docker run -v ~/ohmypcap-data:/data -p 8000:8000 ghcr.io/dougburks/ohmypcap:main
+  http://0.0.0.0:8000/ohmypcap.html
+
+  Used at   the detonation lab, for reading a capture taken during
+            detonation. Not part of URL or document triage.
+  See also  modules/security-scenarios-field-guide.md scenario 2 for the
+            Zeek and Brim path, which scales better for beacon hunting.
+
+===========================================================================
+Parrot Security - full toolset in a throwaway container
+===========================================================================
+  docker run --rm -ti --network host -v $PWD/work:/work parrotsec/security
+
+  Used for  reaching a tool that has no macOS build without installing
+            anything permanently. Files you want to keep go in ./work.
+
+  --network host gives the container your host's network stack. Do not run
+  this with a malware sample mounted. For anything involving a live sample,
+  use the isolated lab: modules/detonation-lab/.
+
+===========================================================================
+Codex security scan - repository scanning
+===========================================================================
+  npx @openai/codex-security scan "$REPOSITORY" --output-dir "$SCAN_DIR"
+  https://learn.chatgpt.com/docs/security/cli
+
+  Used for  source-code security review. Unrelated to URL and document
+            triage; kept here so the note is not lost.
+  See also  modules/cli-security-tools.md for trufflehog, gitleaks, trivy,
+            and the rest of the code-and-supply-chain tooling.
+
+===========================================================================
+devtoolbox-web/
+===========================================================================
+Third-party Next.js developer toolbox (encoders, decoders, converters,
+formatters). Useful for quick base64 and URL decoding without a network
+round trip. Build and run per its own README.md.
+
+  Unrelated to the triage workflow. For decoding during triage, the
+  python3 one-liners in reference/commands-by-filetype.txt are faster, and
+  CyberChef is more capable.
+
+===========================================================================
+OPTIONAL GUI APPLICATIONS
+===========================================================================
+None of these is required. Each is a GUI worth knowing about if you already
+have it, or worth installing if the corresponding stage is one you do often.
+
+  Malcat                interactive file analysis, YARA, carving, hex.
+                        A prompt for driving it via MCP is in
+                        malcat-analysis-prompt.txt
+  Detect It Easy (DIE)  packer and compiler identification. The CLI
+                        equivalent, diec, is what stage 2 and host triage
+                        actually call.
+  Maltego               link analysis and OSINT graphing. Useful in stage 3
+                        for mapping a campaign across the CT-log siblings.
+  Ghidra / Cutter       decompilers, for the detonation lab rather than triage.
+
+If this folder contains .app files, they are macOS aliases pointing at a
+local /Applications install and will not resolve on another machine. Delete
+them before sharing the folder; they are launchers, not content.
+
+Where each tool fits: ../reference/tool-index.txt

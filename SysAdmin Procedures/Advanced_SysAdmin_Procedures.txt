@@ -1,0 +1,1098 @@
+================================================================================
+  ADVANCED SYSADMIN PROCEDURES
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+Prerequisite: See Daily_SysAdmin_Procedures.txt for foundational commands.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+  1.  AD — Group Policy (GPO) Management
+  2.  AD — SSSD Integration on Ubuntu (AD Auth for Linux)
+  3.  AD — Delegation and Fine-Grained Password Policies
+  4.  AD — Bulk Operations and Automation
+  5.  SSL/TLS Certificate Management
+  6.  LVM — Advanced Storage Management
+  7.  Advanced SSH — Tunnels, Jump Hosts, Config Management
+  8.  Rsyslog — Centralized Log Forwarding
+  9.  Cron and Systemd Timers — Task Automation
+  10. Network — VLANs, Bonding, and Routing on Ubuntu
+  11. Performance Tuning — Ubuntu Servers
+  12. Disk Encryption — LUKS on Ubuntu
+  13. Advanced macOS Management
+  14. Scripting Patterns for Sysadmin Automation
+
+
+================================================================================
+SECTION 1: AD — GROUP POLICY (GPO) MANAGEMENT
+================================================================================
+
+Tools: PowerShell GPMC module, gpupdate, gpresult
+Requires: Group Policy Management Console (GPMC) or RSAT
+
+--------------------------------------------------------------------------------
+1.1 VIEWING GPOs
+--------------------------------------------------------------------------------
+
+LIST ALL GPOs IN DOMAIN
+  Get-GPO -All | Select-Object DisplayName,GpoStatus,CreationTime | Sort-Object DisplayName
+
+GET DETAILS ON A SPECIFIC GPO
+  Get-GPO -Name "Default Domain Policy" | Format-List
+
+SHOW GPOs LINKED TO AN OU
+  Get-GPInheritance -Target "OU=Staff,DC=example,DC=com" | Select-Object -ExpandProperty GpoLinks
+
+REPORT ALL SETTINGS IN A GPO (exports to HTML)
+  Get-GPOReport -Name "Workstation Baseline" -ReportType HTML -Path C:\Reports\gpo-report.html
+
+--------------------------------------------------------------------------------
+1.2 CREATING AND LINKING GPOs
+--------------------------------------------------------------------------------
+
+CREATE A NEW GPO
+  New-GPO -Name "Ubuntu-SSH-Hardening" -Comment "Restricts SSH settings via AD"
+
+LINK A GPO TO AN OU
+  New-GPLink -Name "Ubuntu-SSH-Hardening" -Target "OU=Servers,DC=example,DC=com"
+
+SET GPO ENFORCEMENT (prevents child OUs from blocking)
+  Set-GPLink -Name "Ubuntu-SSH-Hardening" -Target "OU=Servers,DC=example,DC=com" -Enforced Yes
+
+DISABLE A GPO LINK (without deleting it)
+  Set-GPLink -Name "Ubuntu-SSH-Hardening" -Target "OU=Servers,DC=example,DC=com" -LinkEnabled No
+
+BACKUP ALL GPOs
+  Backup-GPO -All -Path C:\GPO-Backups\$(Get-Date -Format 'yyyy-MM-dd')
+
+RESTORE A GPO FROM BACKUP
+  Restore-GPO -Name "Workstation Baseline" -Path C:\GPO-Backups\2026-06-01
+
+--------------------------------------------------------------------------------
+1.3 APPLYING AND DIAGNOSING GPOs
+--------------------------------------------------------------------------------
+
+FORCE IMMEDIATE GP UPDATE ON REMOTE MACHINE
+  Invoke-GPUpdate -Computer WS-001 -Force -RandomDelayInMinutes 0
+
+FORCE UPDATE ON ALL COMPUTERS IN AN OU
+  Get-ADComputer -Filter * -SearchBase "OU=Workstations,DC=example,DC=com" | ForEach-Object { Invoke-GPUpdate -Computer $_.Name -Force -RandomDelayInMinutes 0 -AsJob }
+
+CHECK RESULTANT SET OF POLICY FOR A USER ON A COMPUTER
+  gpresult /S WS-001 /USER jsmith /H C:\Reports\rsop-jsmith.html /F
+
+SHOW APPLIED GPOs ON LOCAL MACHINE (command line)
+  gpresult /r
+
+SHOW ONLY COMPUTER POLICY
+  gpresult /r /scope computer
+
+SHOW GPO PROCESSING ERRORS IN EVENT LOG
+  Get-WinEvent -ComputerName DC01 -FilterHashtable @{LogName='System'; Id=1085,1125,1129} -MaxEvents 20 | Format-List TimeCreated,Message
+
+
+================================================================================
+SECTION 2: AD — SSSD INTEGRATION ON UBUNTU (AD AUTH FOR LINUX)
+================================================================================
+
+Purpose: Allow Ubuntu servers to authenticate users against Active Directory.
+Packages: sssd, sssd-ad, realmd, adcli, krb5-user, samba-common-bin, oddjob, oddjob-mkhomedir, packagekit
+
+--------------------------------------------------------------------------------
+2.1 INITIAL DOMAIN JOIN
+--------------------------------------------------------------------------------
+
+INSTALL REQUIRED PACKAGES
+  sudo apt install -y sssd sssd-ad realmd adcli krb5-user samba-common-bin oddjob oddjob-mkhomedir packagekit
+
+DISCOVER THE DOMAIN
+  realm discover example.com
+
+JOIN THE DOMAIN
+  sudo realm join --user=administrator example.com
+  # Enter administrator password when prompted
+
+VERIFY JOIN
+  realm list
+  id administrator@example.com
+
+ALLOW SPECIFIC AD GROUPS TO LOG IN
+  sudo realm permit -g "Linux-Admins@example.com"
+
+ALLOW ALL DOMAIN USERS (not recommended for production)
+  sudo realm permit --all
+
+--------------------------------------------------------------------------------
+2.2 SSSD CONFIGURATION
+--------------------------------------------------------------------------------
+
+MAIN CONFIG FILE: /etc/sssd/sssd.conf (permissions must be 600)
+
+RECOMMENDED /etc/sssd/sssd.conf
+  [sssd]
+  domains = example.com
+  config_file_version = 2
+  services = nss, pam
+
+  [domain/example.com]
+  default_shell = /bin/bash
+  krb5_store_password_if_offline = True
+  cache_credentials = True
+  krb5_realm = EXAMPLE.COM
+  realmd_tags = manages-system joined-with-adcli
+  id_provider = ad
+  fallback_homedir = /home/%u@%d
+  ad_domain = example.com
+  use_fully_qualified_names = True
+  ldap_id_mapping = True
+  access_provider = ad
+  ad_access_filter = memberOf=CN=Linux-Admins,OU=Groups,DC=example,DC=com
+
+APPLY CONFIG CHANGES
+  sudo chmod 600 /etc/sssd/sssd.conf
+  sudo systemctl restart sssd
+
+CLEAR SSSD CACHE (when users report stale credentials)
+  sudo sss_cache -E
+  sudo systemctl restart sssd
+
+CHECK SSSD SERVICE STATUS
+  sudo systemctl status sssd
+  sudo journalctl -u sssd -n 50 --no-pager
+
+TEST USER LOOKUP
+  getent passwd jsmith@example.com
+  id jsmith@example.com
+
+--------------------------------------------------------------------------------
+2.3 SUDOERS VIA AD GROUP
+--------------------------------------------------------------------------------
+
+GRANT SUDO TO AN AD GROUP (create file in /etc/sudoers.d/)
+  echo '%linux-admins@example.com ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/ad-linux-admins
+  sudo chmod 440 /etc/sudoers.d/ad-linux-admins
+
+  # Note: group name is lowercase, spaces replaced with hyphens in sudoers
+
+VERIFY SUDO ACCESS AS DOMAIN USER
+  sudo -l -U jsmith@example.com
+
+--------------------------------------------------------------------------------
+2.4 SSH KEY AUTH FOR AD USERS
+--------------------------------------------------------------------------------
+
+STORE SSH KEYS IN AD (requires schema extension) — OR use per-user authorized_keys:
+  sudo mkdir -p /home/jsmith@example.com/.ssh
+  sudo tee /home/jsmith@example.com/.ssh/authorized_keys <<< "ssh-ed25519 AAAA... jsmith@workstation"
+  sudo chown -R jsmith@example.com: /home/jsmith@example.com/.ssh
+  sudo chmod 700 /home/jsmith@example.com/.ssh
+  sudo chmod 600 /home/jsmith@example.com/.ssh/authorized_keys
+
+
+================================================================================
+SECTION 3: AD — DELEGATION AND FINE-GRAINED PASSWORD POLICIES
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 DELEGATING CONTROL OVER AN OU
+--------------------------------------------------------------------------------
+
+DELEGATE PASSWORD RESET RIGHTS TO A GROUP (PowerShell)
+  $acl = Get-ACL "AD:\OU=Staff,DC=example,DC=com"
+  $group = [Security.Principal.NTAccount]"EXAMPLE\HelpDesk"
+  $guid = [GUID]"00299570-246d-11d0-a768-00aa006e0529"  # Reset Password right
+  $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $group,"ExtendedRight","Allow",$guid,"Descendents",[GUID]"bf967aba-0de6-11d0-a285-00aa003049e2"
+  $acl.AddAccessRule($ace)
+  Set-ACL "AD:\OU=Staff,DC=example,DC=com" $acl
+
+--------------------------------------------------------------------------------
+3.2 FINE-GRAINED PASSWORD POLICIES (PSO)
+--------------------------------------------------------------------------------
+
+CREATE A STRICTER PASSWORD POLICY FOR ADMINS
+  New-ADFineGrainedPasswordPolicy -Name "AdminPasswordPolicy" `
+    -Precedence 10 `
+    -MinPasswordLength 16 `
+    -PasswordHistoryCount 24 `
+    -MaxPasswordAge "60.00:00:00" `
+    -MinPasswordAge "1.00:00:00" `
+    -LockoutThreshold 5 `
+    -LockoutObservationWindow "00:30:00" `
+    -LockoutDuration "00:30:00" `
+    -ComplexityEnabled $true `
+    -ReversibleEncryptionEnabled $false
+
+APPLY PSO TO A GROUP
+  Add-ADFineGrainedPasswordPolicySubject -Identity "AdminPasswordPolicy" -Subjects "IT-Admins"
+
+VIEW PSO APPLIED TO A USER
+  Get-ADUserResultantPasswordPolicy -Identity jsmith
+
+LIST ALL PSOs
+  Get-ADFineGrainedPasswordPolicy -Filter * | Select-Object Name,Precedence,MinPasswordLength,MaxPasswordAge
+
+
+================================================================================
+SECTION 4: AD — BULK OPERATIONS AND AUTOMATION
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1 BULK USER IMPORT FROM CSV
+--------------------------------------------------------------------------------
+
+CSV FORMAT (users.csv):
+  FirstName,LastName,Department,OU,Username,Email
+  Jane,Smith,Finance,OU=Finance,jsmith,jsmith@example.com
+
+IMPORT SCRIPT
+  Import-Csv .\users.csv | ForEach-Object {
+    $password = ConvertTo-SecureString "Welcome1!" -AsPlainText -Force
+    New-ADUser `
+      -GivenName $_.FirstName `
+      -Surname $_.LastName `
+      -Name "$($_.FirstName) $($_.LastName)" `
+      -SamAccountName $_.Username `
+      -UserPrincipalName "$($_.Username)@example.com" `
+      -Department $_.Department `
+      -Path "$($_.OU),DC=example,DC=com" `
+      -AccountPassword $password `
+      -ChangePasswordAtLogon $true `
+      -Enabled $true
+    Write-Host "Created: $($_.Username)"
+  }
+
+--------------------------------------------------------------------------------
+4.2 BULK DISABLE STALE ACCOUNTS
+--------------------------------------------------------------------------------
+
+DRY RUN — list accounts to disable (inactive 90+ days):
+  $cutoff = (Get-Date).AddDays(-90)
+  Get-ADUser -Filter {LastLogonDate -lt $cutoff -and Enabled -eq $true} -Properties LastLogonDate |
+    Where-Object { $_.DistinguishedName -notlike "*OU=ServiceAccounts*" } |
+    Select-Object Name,SamAccountName,LastLogonDate |
+    Export-Csv .\stale-accounts.csv -NoTypeInformation
+
+EXECUTE DISABLE (after reviewing CSV):
+  Import-Csv .\stale-accounts.csv | ForEach-Object {
+    Disable-ADAccount -Identity $_.SamAccountName
+    Move-ADObject -Identity (Get-ADUser $_.SamAccountName).DistinguishedName `
+      -TargetPath "OU=Disabled,DC=example,DC=com"
+    Write-Host "Disabled: $($_.SamAccountName)"
+  }
+
+--------------------------------------------------------------------------------
+4.3 EXPORT FULL AD USER REPORT
+--------------------------------------------------------------------------------
+
+  Get-ADUser -Filter * -Properties DisplayName,EmailAddress,Department,Title,Enabled,LastLogonDate,PasswordLastSet,PasswordNeverExpires |
+    Select-Object SamAccountName,DisplayName,EmailAddress,Department,Title,Enabled,LastLogonDate,PasswordLastSet,PasswordNeverExpires |
+    Export-Csv .\ad-user-report.csv -NoTypeInformation
+
+
+================================================================================
+SECTION 5: SSL/TLS CERTIFICATE MANAGEMENT
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1 LET'S ENCRYPT WITH CERTBOT (Ubuntu)
+--------------------------------------------------------------------------------
+
+INSTALL CERTBOT
+  sudo apt install -y certbot python3-certbot-nginx   # for nginx
+  sudo apt install -y certbot python3-certbot-apache  # for apache
+
+OBTAIN CERTIFICATE (nginx, automatic config)
+  sudo certbot --nginx -d example.com -d www.example.com
+
+OBTAIN CERTIFICATE (standalone — stops nginx temporarily)
+  sudo systemctl stop nginx
+  sudo certbot certonly --standalone -d example.com
+  sudo systemctl start nginx
+
+LIST ALL CERTIFICATES AND EXPIRY DATES
+  sudo certbot certificates
+
+RENEW ALL CERTIFICATES (dry run first)
+  sudo certbot renew --dry-run
+  sudo certbot renew
+
+CHECK AUTO-RENEWAL TIMER
+  sudo systemctl status certbot.timer
+  sudo systemctl list-timers | grep certbot
+
+FORCE RENEW A SPECIFIC CERT
+  sudo certbot renew --cert-name example.com --force-renewal
+
+--------------------------------------------------------------------------------
+5.2 MANUAL CERTIFICATE OPERATIONS
+--------------------------------------------------------------------------------
+
+GENERATE A PRIVATE KEY AND CSR
+  openssl req -new -newkey rsa:4096 -nodes -keyout example.com.key -out example.com.csr \
+    -subj "/C=US/ST=State/L=City/O=Example Org/CN=example.com"
+
+INSPECT A CSR
+  openssl req -text -noout -in example.com.csr
+
+INSPECT A CERTIFICATE (any format)
+  openssl x509 -text -noout -in example.com.crt
+
+CHECK CERTIFICATE EXPIRY DATE
+  openssl x509 -enddate -noout -in /etc/ssl/certs/example.com.crt
+
+CHECK REMOTE CERTIFICATE EXPIRY
+  echo | openssl s_client -connect example.com:443 2>/dev/null | openssl x509 -noout -dates
+
+VERIFY CERT, KEY, AND CSR MATCH (checksums must match)
+  openssl x509 -noout -modulus -in example.com.crt | md5sum
+  openssl rsa  -noout -modulus -in example.com.key | md5sum
+  openssl req  -noout -modulus -in example.com.csr | md5sum
+
+CONVERT PFX TO PEM (for nginx/apache)
+  openssl pkcs12 -in certificate.pfx -nocerts -out private.key -nodes
+  openssl pkcs12 -in certificate.pfx -clcerts -nokeys -out certificate.crt
+  openssl pkcs12 -in certificate.pfx -cacerts -nokeys -out ca-chain.crt
+
+CREATE SELF-SIGNED CERT (testing/internal only)
+  openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
+    -keyout selfsigned.key -out selfsigned.crt \
+    -subj "/CN=internal.example.com"
+
+ADD INTERNAL CA CERT TO UBUNTU TRUST STORE
+  sudo cp internal-ca.crt /usr/local/share/ca-certificates/
+  sudo update-ca-certificates
+
+INSTALL CERT ON macOS SYSTEM KEYCHAIN (remote)
+  scp internal-ca.crt admin@macbook-01.example.com:/tmp/
+  ssh admin@macbook-01.example.com "sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/internal-ca.crt"
+
+BATCH CHECK EXPIRY ACROSS SERVERS (run from admin host)
+  for host in web01 web02 app01; do
+    echo -n "$host: "
+    echo | openssl s_client -connect $host:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null || echo "FAILED"
+  done
+
+
+================================================================================
+SECTION 6: LVM — ADVANCED STORAGE MANAGEMENT
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1 CURRENT LVM STATUS
+--------------------------------------------------------------------------------
+
+SHOW ALL PHYSICAL VOLUMES
+  sudo pvdisplay
+  sudo pvs   # compact view
+
+SHOW ALL VOLUME GROUPS
+  sudo vgdisplay
+  sudo vgs
+
+SHOW ALL LOGICAL VOLUMES
+  sudo lvdisplay
+  sudo lvs
+
+--------------------------------------------------------------------------------
+6.2 ADDING STORAGE
+--------------------------------------------------------------------------------
+
+ADD A NEW DISK TO AN EXISTING VOLUME GROUP
+  sudo pvcreate /dev/sdb
+  sudo vgextend ubuntu-vg /dev/sdb
+  sudo vgs   # confirm free space increased
+
+EXTEND A LOGICAL VOLUME AND RESIZE FILESYSTEM
+  # Extend LV by 20GB
+  sudo lvextend -L +20G /dev/ubuntu-vg/ubuntu-lv
+  # Resize ext4 filesystem online (no unmount needed)
+  sudo resize2fs /dev/ubuntu-vg/ubuntu-lv
+  # For XFS (only grows, never shrinks):
+  sudo xfs_growfs /mountpoint
+
+EXTEND LV TO USE ALL FREE SPACE IN VG
+  sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv && sudo resize2fs /dev/ubuntu-vg/ubuntu-lv
+
+--------------------------------------------------------------------------------
+6.3 LVM SNAPSHOTS (for backup consistency)
+--------------------------------------------------------------------------------
+
+CREATE A SNAPSHOT (10G buffer for changes during backup)
+  sudo lvcreate -L10G -s -n snap-$(date +%Y%m%d) /dev/ubuntu-vg/data-lv
+
+MOUNT A SNAPSHOT READ-ONLY
+  sudo mkdir -p /mnt/snap
+  sudo mount -o ro /dev/ubuntu-vg/snap-20260629 /mnt/snap
+
+BACKUP FROM SNAPSHOT (consistent state)
+  sudo rsync -avz /mnt/snap/ backup@10.0.1.50:/backups/data/
+
+UNMOUNT AND REMOVE SNAPSHOT
+  sudo umount /mnt/snap
+  sudo lvremove -f /dev/ubuntu-vg/snap-20260629
+
+--------------------------------------------------------------------------------
+6.4 REMOVING STORAGE
+--------------------------------------------------------------------------------
+
+SAFELY REMOVE A PHYSICAL VOLUME (move data off first)
+  sudo pvmove /dev/sdc         # moves all extents off /dev/sdc
+  sudo vgreduce ubuntu-vg /dev/sdc
+  sudo pvremove /dev/sdc
+
+
+================================================================================
+SECTION 7: ADVANCED SSH — TUNNELS, JUMP HOSTS, CONFIG MANAGEMENT
+================================================================================
+
+--------------------------------------------------------------------------------
+7.1 SSH TUNNELING
+--------------------------------------------------------------------------------
+
+LOCAL PORT FORWARD (access remote service locally)
+  # Access db01:5432 as localhost:5432 via jump host
+  ssh -L 5432:db01.internal:5432 jumphost.example.com -N -f
+
+REMOTE PORT FORWARD (expose local port on remote server)
+  # Makes your local port 8080 accessible on remote server's port 80
+  ssh -R 80:localhost:8080 user@remote.example.com -N -f
+
+DYNAMIC SOCKS PROXY (use SSH as a SOCKS5 proxy)
+  ssh -D 1080 -N -f user@jumphost.example.com
+  # Configure browser/app to use SOCKS5 proxy at 127.0.0.1:1080
+
+TERMINATE A BACKGROUND SSH TUNNEL
+  pkill -f "ssh -[LRD]"
+
+--------------------------------------------------------------------------------
+7.2 JUMP HOSTS (PROXYJUMP)
+--------------------------------------------------------------------------------
+
+SSH THROUGH A BASTION HOST
+  ssh -J bastion.example.com user@internal-server.example.com
+
+SCP THROUGH A BASTION HOST
+  scp -J bastion.example.com user@internal-server:/path/file.txt ./
+
+TWO-HOP JUMP
+  ssh -J bastion1.example.com,bastion2.example.com user@deep-internal.example.com
+
+--------------------------------------------------------------------------------
+7.3 ~/.ssh/config — CENTRALIZED SSH CONFIGURATION
+--------------------------------------------------------------------------------
+
+RECOMMENDED ~/.ssh/config STRUCTURE:
+
+  # Default settings for all hosts
+  Host *
+      ServerAliveInterval 60
+      ServerAliveCountMax 3
+      AddKeysToAgent yes
+      IdentityFile ~/.ssh/id_ed25519
+
+  # Bastion host
+  Host bastion
+      HostName bastion.example.com
+      User admin
+      IdentityFile ~/.ssh/bastion_ed25519
+
+  # Internal servers via bastion
+  Host web01 web02 app01 db01
+      HostName %h.internal.example.com
+      User ubuntu
+      ProxyJump bastion
+
+  # Specific server override
+  Host db01
+      User dbadmin
+      LocalForward 5432 localhost:5432
+
+USAGE AFTER CONFIG:
+  ssh web01         # connects via bastion automatically
+  ssh db01          # connects + opens port forward automatically
+
+--------------------------------------------------------------------------------
+7.4 SSH KEY MANAGEMENT
+--------------------------------------------------------------------------------
+
+GENERATE ED25519 KEY (preferred over RSA)
+  ssh-keygen -t ed25519 -C "admin@example.com - $(date +%Y-%m-%d)" -f ~/.ssh/id_ed25519
+
+COPY KEY TO A SERVER
+  ssh-copy-id -i ~/.ssh/id_ed25519.pub ubuntu@server.example.com
+
+COPY KEY TO A SERVER WITH NON-STANDARD PORT
+  ssh-copy-id -i ~/.ssh/id_ed25519.pub -p 2222 ubuntu@server.example.com
+
+LIST KEYS IN SSH AGENT
+  ssh-add -l
+
+ADD KEY TO AGENT WITH EXPIRY (8 hours)
+  ssh-add -t 28800 ~/.ssh/id_ed25519
+
+AUDIT AUTHORIZED_KEYS ON ALL SERVERS
+  for host in web01 web02 app01; do
+    echo "=== $host ===" && ssh ubuntu@$host "cat ~/.ssh/authorized_keys 2>/dev/null | awk '{print \$NF}'"
+  done
+
+ROTATE SSH HOST KEYS (run on server, breaks known_hosts)
+  sudo rm /etc/ssh/ssh_host_*
+  sudo dpkg-reconfigure openssh-server
+  sudo systemctl restart ssh
+
+
+================================================================================
+SECTION 8: RSYSLOG — CENTRALIZED LOG FORWARDING
+================================================================================
+
+Purpose: Forward logs from all Ubuntu servers to a central log server.
+
+--------------------------------------------------------------------------------
+8.1 LOG SERVER SETUP
+--------------------------------------------------------------------------------
+
+CONFIGURE RSYSLOG TO RECEIVE LOGS (/etc/rsyslog.conf on log server):
+  # Enable UDP and TCP receivers
+  module(load="imudp") input(type="imudp" port="514")
+  module(load="imtcp") input(type="imtcp" port="514")
+
+  # Store logs per-host
+  $template RemoteLogs,"/var/log/remote/%HOSTNAME%/%PROGRAMNAME%.log"
+  *.* ?RemoteLogs
+
+CREATE LOG DIRECTORY
+  sudo mkdir -p /var/log/remote
+  sudo chown syslog:adm /var/log/remote
+
+APPLY CONFIG
+  sudo systemctl restart rsyslog
+
+OPEN UFW PORT FOR SYSLOG
+  sudo ufw allow from 10.0.0.0/8 to any port 514
+
+--------------------------------------------------------------------------------
+8.2 CLIENT CONFIGURATION
+--------------------------------------------------------------------------------
+
+ADD TO /etc/rsyslog.conf ON EACH CLIENT:
+  # Forward all logs to log server via TCP
+  *.* @@10.0.1.100:514
+
+  # Forward only auth logs (more selective)
+  auth,authpriv.* @@10.0.1.100:514
+
+RELOAD CLIENT
+  sudo systemctl restart rsyslog
+
+VERIFY LOG FORWARDING IS WORKING
+  logger "Test message from $(hostname)"
+  # Check on log server:
+  sudo tail -f /var/log/remote/$(hostname)/root.log
+
+
+================================================================================
+SECTION 9: CRON AND SYSTEMD TIMERS — TASK AUTOMATION
+================================================================================
+
+--------------------------------------------------------------------------------
+9.1 CRON
+--------------------------------------------------------------------------------
+
+EDIT USER CRONTAB
+  crontab -e
+
+EDIT SYSTEM CRONTAB (root)
+  sudo crontab -e
+
+LIST CRONTAB FOR A USER
+  crontab -l -u jsmith
+
+CRON SCHEDULE SYNTAX:
+  # ┌─ minute (0-59)
+  # │ ┌─ hour (0-23)
+  # │ │ ┌─ day of month (1-31)
+  # │ │ │ ┌─ month (1-12)
+  # │ │ │ │ ┌─ day of week (0-7, Sun=0 or 7)
+  # │ │ │ │ │
+  # * * * * * command
+
+COMMON CRON EXAMPLES:
+  # Daily at 2am
+  0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1
+
+  # Every 15 minutes
+  */15 * * * * /usr/local/bin/check-services.sh
+
+  # Weekdays at 7am
+  0 7 * * 1-5 /usr/local/bin/morning-report.sh
+
+  # First day of month at midnight
+  0 0 1 * * /usr/local/bin/monthly-cleanup.sh
+
+VIEW CRON LOG
+  sudo grep CRON /var/log/syslog | tail -30
+
+--------------------------------------------------------------------------------
+9.2 SYSTEMD TIMERS (preferred for system-level tasks)
+--------------------------------------------------------------------------------
+
+CREATE A SERVICE UNIT (/etc/systemd/system/backup.service):
+  [Unit]
+  Description=Daily Backup Job
+  After=network.target
+
+  [Service]
+  Type=oneshot
+  User=root
+  ExecStart=/usr/local/bin/backup.sh
+  StandardOutput=journal
+  StandardError=journal
+
+CREATE MATCHING TIMER (/etc/systemd/system/backup.timer):
+  [Unit]
+  Description=Daily Backup Timer
+  Requires=backup.service
+
+  [Timer]
+  OnCalendar=*-*-* 02:00:00
+  Persistent=true
+
+  [Install]
+  WantedBy=timers.target
+
+ENABLE AND START THE TIMER
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now backup.timer
+
+LIST ALL TIMERS AND NEXT RUN TIMES
+  systemctl list-timers --all
+
+RUN THE JOB MANUALLY (without waiting for timer)
+  sudo systemctl start backup.service
+
+VIEW TIMER JOB LOGS
+  sudo journalctl -u backup.service -n 50 --no-pager
+
+
+================================================================================
+SECTION 10: NETWORK — VLANs, BONDING, AND ROUTING ON UBUNTU
+================================================================================
+
+Ubuntu 24.04 uses Netplan (/etc/netplan/*.yaml) for network configuration.
+Always validate before applying: sudo netplan try (auto-reverts if connection lost)
+
+--------------------------------------------------------------------------------
+10.1 VLAN CONFIGURATION
+--------------------------------------------------------------------------------
+
+/etc/netplan/01-vlans.yaml:
+  network:
+    version: 2
+    ethernets:
+      ens3:
+        dhcp4: false
+
+    vlans:
+      vlan10:
+        id: 10
+        link: ens3
+        addresses: [10.0.10.5/24]
+        gateway4: 10.0.10.1
+        nameservers:
+          addresses: [10.0.0.53]
+      vlan20:
+        id: 20
+        link: ens3
+        addresses: [10.0.20.5/24]
+
+APPLY VLAN CONFIG (with auto-revert safety)
+  sudo netplan try
+  # Press Enter to confirm, or wait 120s to revert
+
+VERIFY VLANS ARE UP
+  ip addr show
+  ip link show type vlan
+
+--------------------------------------------------------------------------------
+10.2 NETWORK BONDING (link aggregation)
+--------------------------------------------------------------------------------
+
+/etc/netplan/01-bond.yaml:
+  network:
+    version: 2
+    ethernets:
+      ens3: {dhcp4: false}
+      ens4: {dhcp4: false}
+
+    bonds:
+      bond0:
+        interfaces: [ens3, ens4]
+        addresses: [10.0.1.10/24]
+        gateway4: 10.0.1.1
+        parameters:
+          mode: active-backup   # or: 802.3ad (LACP), balance-rr
+          mii-monitor-interval: 100
+        nameservers:
+          addresses: [10.0.0.53]
+
+CHECK BOND STATUS
+  cat /proc/net/bonding/bond0
+
+--------------------------------------------------------------------------------
+10.3 STATIC ROUTING
+--------------------------------------------------------------------------------
+
+ADD A TEMPORARY STATIC ROUTE
+  sudo ip route add 192.168.100.0/24 via 10.0.1.1 dev ens3
+
+MAKE ROUTE PERSISTENT (/etc/netplan/01-routes.yaml):
+  network:
+    version: 2
+    ethernets:
+      ens3:
+        routes:
+          - to: 192.168.100.0/24
+            via: 10.0.1.1
+
+SHOW ROUTING TABLE
+  ip route show
+
+TRACE ROUTE TO DESTINATION
+  traceroute -n 8.8.8.8
+  mtr --report 8.8.8.8  # install: sudo apt install mtr
+
+
+================================================================================
+SECTION 11: PERFORMANCE TUNING — UBUNTU SERVERS
+================================================================================
+
+--------------------------------------------------------------------------------
+11.1 KERNEL PARAMETER TUNING (sysctl)
+--------------------------------------------------------------------------------
+
+VIEW CURRENT NETWORK BUFFERS
+  sysctl net.core.rmem_max net.core.wmem_max
+
+APPLY PERFORMANCE TUNING PERSISTENTLY (/etc/sysctl.d/99-performance.conf):
+  # Network performance
+  net.core.rmem_max = 134217728
+  net.core.wmem_max = 134217728
+  net.ipv4.tcp_rmem = 4096 87380 134217728
+  net.ipv4.tcp_wmem = 4096 65536 134217728
+  net.core.netdev_max_backlog = 5000
+
+  # Connection tracking (for busy servers/firewalls)
+  net.netfilter.nf_conntrack_max = 1048576
+
+  # File descriptor limits
+  fs.file-max = 2097152
+
+  # VM swappiness (lower = prefer RAM over swap)
+  vm.swappiness = 10
+
+APPLY SYSCTL CHANGES WITHOUT REBOOT
+  sudo sysctl -p /etc/sysctl.d/99-performance.conf
+
+--------------------------------------------------------------------------------
+11.2 FILE DESCRIPTOR AND PROCESS LIMITS
+--------------------------------------------------------------------------------
+
+CHECK CURRENT LIMITS FOR A PROCESS
+  cat /proc/$(pgrep nginx | head -1)/limits
+
+SET SYSTEM-WIDE LIMITS (/etc/security/limits.d/99-limits.conf):
+  *       soft    nofile  65535
+  *       hard    nofile  65535
+  *       soft    nproc   65535
+  *       hard    nproc   65535
+
+SET LIMITS FOR SYSTEMD SERVICES (in service unit [Service] section):
+  LimitNOFILE=65535
+  LimitNPROC=65535
+
+--------------------------------------------------------------------------------
+11.3 DISK I/O TUNING
+--------------------------------------------------------------------------------
+
+CHECK CURRENT I/O SCHEDULER
+  cat /sys/block/sda/queue/scheduler
+
+SET DEADLINE SCHEDULER FOR SSD (temporary)
+  echo mq-deadline | sudo tee /sys/block/sda/queue/scheduler
+
+MAKE PERSISTENT (add to /etc/udev/rules.d/60-scheduler.rules):
+  ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"
+
+FIND TOP I/O CONSUMERS
+  sudo iotop -o -P -d 2
+
+BENCHMARK DISK SPEED
+  sudo hdparm -Tt /dev/sda
+
+
+================================================================================
+SECTION 12: DISK ENCRYPTION — LUKS ON UBUNTU
+================================================================================
+
+--------------------------------------------------------------------------------
+12.1 ENCRYPT A NEW DATA PARTITION
+--------------------------------------------------------------------------------
+
+INSTALL CRYPTSETUP
+  sudo apt install -y cryptsetup
+
+FORMAT PARTITION WITH LUKS (DESTRUCTIVE — data will be lost)
+  sudo cryptsetup luksFormat /dev/sdb1
+
+OPEN THE ENCRYPTED PARTITION
+  sudo cryptsetup luksOpen /dev/sdb1 encrypted-data
+
+FORMAT AND MOUNT
+  sudo mkfs.ext4 /dev/mapper/encrypted-data
+  sudo mkdir -p /mnt/secure
+  sudo mount /dev/mapper/encrypted-data /mnt/secure
+
+--------------------------------------------------------------------------------
+12.2 AUTO-MOUNT VIA KEYFILE (for servers that reboot unattended)
+--------------------------------------------------------------------------------
+
+GENERATE A KEYFILE
+  sudo dd if=/dev/urandom of=/etc/luks-keys/data.key bs=512 count=8
+  sudo chmod 600 /etc/luks-keys/data.key
+
+ADD KEYFILE TO LUKS VOLUME
+  sudo cryptsetup luksAddKey /dev/sdb1 /etc/luks-keys/data.key
+
+ADD TO /etc/crypttab (for auto-unlock at boot):
+  encrypted-data  /dev/sdb1  /etc/luks-keys/data.key  luks
+
+ADD TO /etc/fstab:
+  /dev/mapper/encrypted-data  /mnt/secure  ext4  defaults  0  2
+
+--------------------------------------------------------------------------------
+12.3 LUKS ADMINISTRATION
+--------------------------------------------------------------------------------
+
+CHECK LUKS STATUS
+  sudo cryptsetup status encrypted-data
+
+LIST ALL KEY SLOTS
+  sudo cryptsetup luksDump /dev/sdb1 | grep "Key Slot"
+
+CHANGE PASSPHRASE
+  sudo cryptsetup luksChangeKey /dev/sdb1
+
+BACKUP LUKS HEADER (critical — required for recovery)
+  sudo cryptsetup luksHeaderBackup /dev/sdb1 --header-backup-file /secure-location/sdb1-header.bak
+
+RESTORE LUKS HEADER (disaster recovery)
+  sudo cryptsetup luksHeaderRestore /dev/sdb1 --header-backup-file /secure-location/sdb1-header.bak
+
+
+================================================================================
+SECTION 13: ADVANCED macOS MANAGEMENT
+================================================================================
+
+--------------------------------------------------------------------------------
+13.1 MDM AND CONFIGURATION PROFILES
+--------------------------------------------------------------------------------
+
+GENERATE A SIGNED MOBILECONFIG (requires Apple Developer cert or MDM)
+  # Use Apple Configurator 2 on macOS, or deploy via MDM (Jamf, Mosyle, Kandji, etc.)
+
+INSTALL A PROFILE REMOTELY (unsigned — for testing only)
+  scp custom.mobileconfig admin@macbook-01.example.com:/tmp/
+  ssh admin@macbook-01.example.com "sudo profiles install -path /tmp/custom.mobileconfig"
+
+LIST INSTALLED PROFILES WITH DETAIL
+  sudo profiles show -all 2>/dev/null | grep -A3 "attribute: name"
+
+VERIFY A SPECIFIC PROFILE IS INSTALLED
+  sudo profiles list -all | grep "com.example.wifi"
+
+REMOVE A PROFILE BY IDENTIFIER
+  sudo profiles remove -identifier com.example.wificonfiguration -forced
+
+--------------------------------------------------------------------------------
+13.2 REMOTE MANAGEMENT AT SCALE (SSH FOR LOOPS)
+--------------------------------------------------------------------------------
+
+RUN COMMAND ON ALL MACS (from admin workstation, requires SSH keys)
+  for mac in mac01 mac02 mac03 mac04; do
+    echo "=== $mac ===" && ssh admin@$mac.example.com "sw_vers -productVersion && fdesetup status" 2>/dev/null || echo "UNREACHABLE"
+  done
+
+PUSH SOFTWARE UPDATE TO ALL MACS
+  for mac in mac01 mac02 mac03; do
+    ssh admin@$mac.example.com "sudo softwareupdate -i -a > /tmp/update.log 2>&1 &"
+  done
+
+CHECK FILEVAULT STATUS ON ALL MACS
+  for mac in mac01 mac02 mac03; do
+    echo -n "$mac: " && ssh admin@$mac.example.com "fdesetup status 2>/dev/null" || echo "UNREACHABLE"
+  done
+
+--------------------------------------------------------------------------------
+13.3 SPOTLIGHT AND METADATA
+--------------------------------------------------------------------------------
+
+DISABLE SPOTLIGHT ON A VOLUME (servers/sensitive mounts)
+  sudo mdutil -d /Volumes/ExternalDrive
+
+ENABLE AND REINDEX
+  sudo mdutil -E -i on /
+
+REBUILD ENTIRE SPOTLIGHT INDEX
+  sudo mdutil -E /
+
+--------------------------------------------------------------------------------
+13.4 KEYCHAIN AND CERTIFICATE MANAGEMENT
+--------------------------------------------------------------------------------
+
+LIST ALL CERTIFICATES IN SYSTEM KEYCHAIN
+  security find-certificate -a /Library/Keychains/System.keychain | grep "labl"
+
+CHECK EXPIRY OF ALL SYSTEM CERTS
+  security find-certificate -a -p /Library/Keychains/System.keychain | \
+    openssl x509 -noout -subject -enddate 2>/dev/null | paste - -
+
+ADD A CA CERT TO SYSTEM KEYCHAIN AND TRUST
+  sudo security add-trusted-cert -d -r trustRoot \
+    -k /Library/Keychains/System.keychain /path/to/internal-ca.crt
+
+DELETE A CERTIFICATE FROM SYSTEM KEYCHAIN
+  sudo security delete-certificate -c "Internal CA" /Library/Keychains/System.keychain
+
+--------------------------------------------------------------------------------
+13.5 POWER AND ENERGY MANAGEMENT
+--------------------------------------------------------------------------------
+
+SHOW CURRENT POWER SETTINGS
+  pmset -g
+
+PREVENT SLEEP WHILE RUNNING A TASK
+  caffeinate -i -t 3600 /usr/local/bin/long-task.sh
+
+SET SCHEDULED SHUTDOWN
+  sudo pmset schedule shutdown "06/30/2026 18:00:00"
+
+SHOW SCHEDULED POWER EVENTS
+  sudo pmset -g sched
+
+VIEW SLEEP/WAKE HISTORY
+  pmset -g log | grep -E "Sleep|Wake" | tail -20
+
+
+================================================================================
+SECTION 14: SCRIPTING PATTERNS FOR SYSADMIN AUTOMATION
+================================================================================
+
+--------------------------------------------------------------------------------
+14.1 BASH SCRIPT TEMPLATE
+--------------------------------------------------------------------------------
+
+  #!/usr/bin/env bash
+  set -euo pipefail   # exit on error, undefined vars, pipe failures
+  IFS=$'\n\t'
+
+  readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  readonly LOG_FILE="/var/log/$(basename "$0" .sh).log"
+  readonly TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+  log() { echo "[$TIMESTAMP] $*" | tee -a "$LOG_FILE"; }
+  die() { log "ERROR: $*" >&2; exit 1; }
+
+  # Require root
+  [[ $EUID -ne 0 ]] && die "Must run as root"
+
+  log "Starting $(basename "$0")"
+  # Your logic here
+  log "Completed successfully"
+
+--------------------------------------------------------------------------------
+14.2 SEND EMAIL ALERT ON FAILURE (with msmtp)
+--------------------------------------------------------------------------------
+
+INSTALL MSMTP
+  sudo apt install -y msmtp msmtp-mta
+
+CONFIGURE /etc/msmtprc:
+  account default
+  host smtp.example.com
+  port 587
+  auth on
+  user alerts@example.com
+  password yourpassword
+  tls on
+  tls_starttls on
+
+SEND ALERT IN SCRIPT:
+  send_alert() {
+    local subject="$1" body="$2"
+    echo -e "Subject: $subject\n\n$body" | msmtp alerts@example.com
+  }
+  # Usage:
+  disk_usage=$(df -h / | awk 'NR==2{print $5}')
+  [[ "${disk_usage%\%}" -gt 85 ]] && send_alert "DISK WARNING: $(hostname)" "Root disk at $disk_usage"
+
+--------------------------------------------------------------------------------
+14.3 PARALLEL SSH COMMAND EXECUTION
+--------------------------------------------------------------------------------
+
+INSTALL PARALLEL-SSH
+  sudo apt install -y pssh
+
+RUN COMMAND ON MULTIPLE SERVERS IN PARALLEL
+  parallel-ssh -H "web01 web02 app01 db01" -i "uptime"
+
+WITH A HOSTS FILE (one hostname per line)
+  parallel-ssh -h /etc/pssh-hosts -i "df -h / | tail -1"
+
+COPY FILE TO MULTIPLE SERVERS IN PARALLEL
+  parallel-scp -H "web01 web02 app01" /etc/motd /etc/motd
+
+--------------------------------------------------------------------------------
+14.4 HEALTH CHECK SCRIPT PATTERN
+--------------------------------------------------------------------------------
+
+  #!/usr/bin/env bash
+  # health-check.sh — run daily via cron
+  set -euo pipefail
+
+  ALERT_EMAIL="alerts@example.com"
+  DISK_THRESHOLD=85
+  LOAD_THRESHOLD=4
+  REPORT=""
+
+  # Disk check
+  while IFS= read -r line; do
+    usage=$(echo "$line" | awk '{print $5}' | tr -d '%')
+    mount=$(echo "$line" | awk '{print $6}')
+    if [[ $usage -ge $DISK_THRESHOLD ]]; then
+      REPORT+="DISK HIGH: $mount at ${usage}%\n"
+    fi
+  done < <(df -h --output=pcent,target | tail -n +2)
+
+  # Load check
+  load=$(uptime | awk -F'load average:' '{print $2}' | awk -F',' '{print $1}' | xargs)
+  if (( $(echo "$load > $LOAD_THRESHOLD" | bc -l) )); then
+    REPORT+="LOAD HIGH: $load\n"
+  fi
+
+  # Failed services
+  failed=$(systemctl --failed --no-legend | wc -l)
+  [[ $failed -gt 0 ]] && REPORT+="FAILED SERVICES: $failed\n"
+
+  # Send alert if issues found
+  if [[ -n "$REPORT" ]]; then
+    echo -e "Host: $(hostname)\nDate: $(date)\n\n$REPORT" | \
+      mail -s "Health Alert: $(hostname)" "$ALERT_EMAIL"
+  fi
+
+================================================================================
+END OF DOCUMENT
+================================================================================

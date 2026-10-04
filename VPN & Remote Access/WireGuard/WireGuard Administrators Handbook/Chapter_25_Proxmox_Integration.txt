@@ -1,0 +1,157 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 25 PROXMOX
+INTEGRATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter describes integrating WireGuard with Proxmox VE (PVE) and
+Proxmox Backup Server (PBS) to provide secure remote administration,
+cluster management, backup access, and inter-site connectivity.
+
+===============================================================================
+2. USE CASES
+===============================================================================
+
+-   Secure access to the Proxmox web interface
+-   SSH administration
+-   Cluster management
+-   Migration network access
+-   PBS administration
+-   Site-to-site connectivity between clusters
+-   Out-of-band recovery access
+
+===============================================================================
+3. RECOMMENDED NETWORK DESIGN
+===============================================================================
+
+Internet | Firewall | WireGuard Gateway | Management VLAN | +—————————–+
+| Proxmox Nodes | | PBS | | Monitoring | +—————————–+
+
+Keep management traffic separate from VM and storage traffic.
+
+===============================================================================
+4. INSTALLATION
+===============================================================================
+
+Install WireGuard
+
+apt update apt install wireguard wireguard-tools
+
+Enable forwarding if acting as a gateway
+
+sysctl -w net.ipv4.ip_forward=1
+
+Verify
+
+wg –version
+
+===============================================================================
+5. ACCESS CONTROL
+===============================================================================
+
+Restrict VPN clients to management services.
+
+Typical ports
+
+22 SSH 8006 Proxmox Web UI 8007 PBS Web UI
+
+Example
+
+iptables -A FORWARD -i wg0 -p tcp –dport 8006 -j ACCEPT iptables -A
+FORWARD -i wg0 -p tcp –dport 8007 -j ACCEPT
+
+===============================================================================
+6. CLUSTER CONSIDERATIONS
+===============================================================================
+
+WireGuard should normally provide administrative access only.
+
+Do not route Corosync cluster traffic through the VPN unless the design
+specifically requires it and latency/jitter have been validated.
+
+===============================================================================
+7. BACKUP NETWORKS
+===============================================================================
+
+Allow VPN administrators to reach PBS without exposing the service
+publicly.
+
+Validate
+
+proxmox-backup-manager status
+
+Test backup and restore operations after network changes.
+
+===============================================================================
+8. ROUTING
+===============================================================================
+
+Advertise only required management prefixes.
+
+Example
+
+AllowedIPs = 10.60.40.0/24
+
+Avoid exposing VM networks unless required.
+
+===============================================================================
+9. MONITORING
+===============================================================================
+
+WireGuard
+
+wg show
+
+Proxmox
+
+pvecm status systemctl status pveproxy systemctl status pvedaemon
+
+PBS
+
+systemctl status proxmox-backup
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Cannot access Web UI
+
+-   Verify VPN handshake
+-   Verify route
+-   Verify firewall
+-   Confirm pveproxy running
+
+Cannot SSH
+
+-   Check SSH service
+-   Firewall
+-   Routing
+-   Host keys
+
+Cluster issues
+
+-   Verify Corosync network
+-   Confirm management VPN is not interfering
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Use split tunneling.
+-   Restrict VPN to management VLANs.
+-   Protect PBS behind the VPN.
+-   Monitor handshake age.
+-   Back up WireGuard configuration.
+-   Document node addresses and peer assignments.
+-   Test remote recovery regularly.
+
+===============================================================================
+12. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] VPN operational [ ] Management VLAN reachable [ ] Web UI accessible
+[ ] SSH tested [ ] PBS accessible [ ] Firewall validated [ ] Monitoring
+enabled [ ] Documentation updated
+
+END OF CHAPTER 25

@@ -1,0 +1,23 @@
+2. Configure Proxy for All Users (System-Wide) via Registry
+To ensure the proxy settings apply to all users and system processes, you can set them in the Windows Registry.
+Open Registry Editor:
+Press Win + R, type regedit, and press Enter.
+
+Navigate to the Proxy Settings Key:
+Go to HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings.
+
+Create or Modify Proxy Settings:
+If the Internet Settings key doesn’t exist, right-click the Windows key, select New > Key, and name it Internet Settings.
+
+Create the following DWORD values (right-click > New > DWORD (32-bit) Value):
+ProxySettingsPerUser: Set to 0 (ensures system-wide settings).
+
+Navigate to HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings.
+
+Create or modify these string values:
+ProxyEnable: Set to 1 (enables proxy).
+
+ProxyServer: Set to proxy_ip:port (e.g., 192.168.1.100:8080).
+
+ProxyOverride: (Optional) Add <local> or specific domains to bypass the proxy (e.g., localhost;*.mydomain.com).
+

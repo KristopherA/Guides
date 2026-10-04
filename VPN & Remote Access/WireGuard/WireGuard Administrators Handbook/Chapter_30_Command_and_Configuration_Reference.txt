@@ -1,0 +1,266 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 30 COMMAND AND
+CONFIGURATION REFERENCE
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter is a quick-reference guide for the commands, files,
+services, and configuration directives most commonly used when
+administering WireGuard in an enterprise environment.
+
+===============================================================================
+2. ESSENTIAL FILES
+===============================================================================
+
+/etc/wireguard/ WireGuard configuration directory
+
+/etc/wireguard/wg0.conf Primary interface configuration
+
+/etc/sysctl.conf Kernel networking parameters
+
+/etc/iproute2/rt_tables Custom routing tables
+
+===============================================================================
+3. WG COMMAND REFERENCE
+===============================================================================
+
+Show all interfaces
+
+wg
+
+Show a specific interface
+
+wg show wg0
+
+Show public keys
+
+wg show wg0 public-key
+
+Show latest handshakes
+
+wg show wg0 latest-handshakes
+
+Show transfer counters
+
+wg show wg0 transfer
+
+Show endpoints
+
+wg show wg0 endpoints
+
+===============================================================================
+4. WG-QUICK
+===============================================================================
+
+Start interface
+
+wg-quick up wg0
+
+Stop interface
+
+wg-quick down wg0
+
+Restart
+
+wg-quick down wg0 wg-quick up wg0
+
+===============================================================================
+5. SYSTEMD
+===============================================================================
+
+Enable
+
+systemctl enable wg-quick@wg0
+
+Start
+
+systemctl start wg-quick@wg0
+
+Restart
+
+systemctl restart wg-quick@wg0
+
+Status
+
+systemctl status wg-quick@wg0
+
+===============================================================================
+6. IP COMMANDS
+===============================================================================
+
+Addresses
+
+ip addr
+
+Routes
+
+ip route
+
+IPv6 routes
+
+ip -6 route
+
+Policy rules
+
+ip rule
+
+Route lookup
+
+ip route get 10.60.10.10
+
+Monitor changes
+
+ip monitor
+
+===============================================================================
+7. FIREWALL COMMANDS
+===============================================================================
+
+iptables
+
+iptables -L -n -v iptables -t nat -L -n -v iptables-save
+
+nftables
+
+nft list ruleset nft monitor trace
+
+===============================================================================
+8. DIAGNOSTICS
+===============================================================================
+
+Sockets
+
+ss -lunp
+
+Summary
+
+ss -s
+
+Packet capture
+
+tcpdump -ni wg0 tcpdump -ni eth0 udp port 51820
+
+Connection tracking
+
+conntrack -L
+
+===============================================================================
+9. LOGGING
+===============================================================================
+
+WireGuard
+
+journalctl -u wg-quick@wg0
+
+Follow logs
+
+journalctl -u wg-quick@wg0 -f
+
+Current boot
+
+journalctl -b
+
+===============================================================================
+10. SYSCTL
+===============================================================================
+
+IPv4 forwarding
+
+sysctl net.ipv4.ip_forward
+
+IPv6 forwarding
+
+sysctl net.ipv6.conf.all.forwarding
+
+Apply changes
+
+sysctl -p
+
+===============================================================================
+11. WG0.CONF DIRECTIVES
+===============================================================================
+
+[Interface]
+
+Address ListenPort PrivateKey MTU DNS Table SaveConfig PreUp PostUp
+PreDown PostDown
+
+[Peer]
+
+PublicKey PresharedKey AllowedIPs Endpoint PersistentKeepalive
+
+===============================================================================
+12. COMMON PORTS
+===============================================================================
+
+22 SSH 53 DNS 80 HTTP 88 Kerberos 123 NTP 389 LDAP 443 HTTPS 445 SMB 464
+Kerberos Password 636 LDAPS 3389 RDP 51820 WireGuard 8006 Proxmox VE
+8007 Proxmox Backup Server 6443 Kubernetes API
+
+===============================================================================
+13. VALIDATION COMMANDS
+===============================================================================
+
+wg wg show ip addr ip route ping traceroute dig nslookup host ss -lunp
+tcpdump journalctl
+
+===============================================================================
+14. TROUBLESHOOTING INDEX
+===============================================================================
+
+No handshake
+
+-   wg show
+-   ss -lunp
+-   tcpdump
+-   firewall
+
+Handshake but no traffic
+
+-   ip route
+-   AllowedIPs
+-   sysctl
+-   firewall
+
+DNS issues
+
+-   dig
+-   nslookup
+-   host
+-   tcpdump port 53
+
+Performance
+
+-   iperf3
+-   top
+-   htop
+-   mpstat
+
+===============================================================================
+15. QUICK HEALTH CHECK
+===============================================================================
+
+wg show
+
+systemctl status wg-quick@wg0
+
+ip route
+
+iptables -L -n -v
+
+journalctl -u wg-quick@wg0 –since “1 hour ago”
+
+ping remote gateway
+
+===============================================================================
+16. ADMINISTRATOR CHECKLIST
+===============================================================================
+
+[ ] Tunnel active [ ] Recent handshake [ ] Routes present [ ] Firewall
+loaded [ ] DNS operational [ ] Monitoring healthy [ ] Backups current [
+] Documentation updated
+
+END OF CHAPTER 30
+
+END OF WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK

@@ -1,0 +1,107 @@
+LDAP Slowness troubleshooting
+
+https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/view-set-ldap-policy-using-ntdsutil
+
+To investigate the cause of an LDAP process dropping connections intermittently on Windows Server 2022, you’ll need to systematically gather diagnostic information and analyze potential issues such as network problems, authentication failures, resource constraints, or configuration errors. Below is a step-by-step guide to help you troubleshoot this issue effectively:
+1. Enable LDAP Diagnostic Logging
+Windows Server provides built-in tools to log LDAP-related events, which can help identify the root cause of connection drops.
+Enable LDAP Interface Events Logging:
+Open the Registry Editor (regedit).
+Navigate to:
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics
+Locate the key 16 LDAP Interface Events.
+Set its value to 2 (DWORD) for basic logging or 5 for verbose logging.
+Click OK and close the Registry Editor.
+Check Event Logs:
+Open Event Viewer (eventvwr.msc).
+Navigate to Applications and Services Logs > Directory Service.
+Look for events related to LDAP, such as:
+Event ID 2889: Indicates an unsigned LDAP bind attempt (potential security issue).
+Event ID 1215: LDAP client closed the connection.
+Event ID 1535: An LDAP error occurred.
+Filter the logs for the time frame when the drops occur to narrow down the cause.
+2. Test LDAP Connectivity with Ldp.exe
+Use the built-in Ldp.exe tool to manually test LDAP connectivity and observe any failures.
+Steps:
+Open a command prompt as Administrator and type ldp.exe.
+Go to Connection > Connect.
+Enter the server name (e.g., your domain controller’s FQDN) and port (389 for LDAP, 636 for LDAPS).
+Click OK to connect.
+Go to Connection > Bind, enter credentials if required, and test the bind.
+Monitor for errors like "Server unavailable" or timeouts.
+What to Look For:
+If the connection fails or drops, note the exact error message and timing.
+Test both LDAP (port 389) and LDAPS (port 636) to see if the issue is specific to one protocol.
+3. Monitor Network Traffic
+Network issues could cause intermittent LDAP connection drops. Use a tool like Wireshark or netstat to inspect traffic.
+Using netstat:
+Open a command prompt as Administrator.
+Run:
+netstat -an | find "389" (for LDAP)
+netstat -an | find "636" (for LDAPS)
+Check the state of connections (e.g., ESTABLISHED, TIME_WAIT, CLOSE_WAIT).
+If connections are dropping, you’ll see them transition to CLOSE_WAIT or disappear unexpectedly.
+Using Wireshark:
+Install Wireshark on the server or a monitoring machine.
+Set a filter for tcp.port == 389 or tcp.port == 636.
+Look for TCP resets (RST packets), retransmissions, or timeouts during the drop periods.
+4. Check Resource Usage
+LDAP connection drops could be due to resource exhaustion on the server (e.g., CPU, memory, or thread pool limits).
+Steps:
+Open Task Manager or Resource Monitor (resmon).
+Monitor:
+CPU and memory usage of the lsass.exe process (LDAP runs under this).
+Network utilization.
+Look for spikes correlating with the drop times.
+Performance Counters:
+Open Performance Monitor (perfmon.msc).
+Add counters under NTDS:
+LDAP Bind Time: Time taken for binds (high values indicate delays).
+LDAP Client Sessions: Number of active sessions (check for sudden drops).
+Request Latency: Time to process requests.
+Correlate spikes or drops with the issue timeline.
+5. Verify LDAP Configuration and Policies
+Windows Server 2022 enforces stricter LDAP security by default (e.g., requiring signing or channel binding), which could cause compatibility issues.
+Check LDAP Signing Requirements:
+Open Group Policy Management (gpmc.msc).
+Navigate to Default Domain Controllers Policy > Computer Configuration > Policies > Windows Settings > Security Settings > Local Policies > Security Options.
+Look for Domain controller: LDAP server signing requirements.
+If set to "Require signing," unsigned binds will fail, potentially causing drops.
+Check clients/applications to ensure they support signed binds.
+Check LDAP Channel Binding:
+In the same policy, look for Domain controller: LDAP server channel binding token requirements.
+If set to "Always," ensure clients support channel binding and the server has a valid TLS certificate.
+Registry Check:
+Open regedit and go to:
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\NTDS\Parameters
+Look for LDAPServerIntegrity (1 = optional, 2 = required) and adjust if needed.
+6. Review Domain Controller Health
+If the server is a domain controller, ensure it’s functioning correctly.
+Run DCDiag:
+Open a command prompt as Administrator.
+Run:
+dcdiag /v > dcdiag_output.txt
+Review the output for LDAP-related errors (e.g., replication issues, DNS problems).
+Check Time Synchronization:
+Run:
+w32tm /query /status
+Ensure the time is in sync with other domain controllers (LDAP/Kerberos is sensitive to time skew).
+7. Analyze Application/Client Behavior
+If the drops are triggered by specific clients or applications, investigate their LDAP usage.
+Steps:
+Identify the clients by IP from the Event Viewer logs (e.g., Event ID 2889 includes the client IP).
+Check if they’re using simple binds over unencrypted connections or outdated protocols.
+Update clients to use LDAPS (port 636) with TLS or signed SASL binds.
+8. Correlate Findings with Timing
+Since the drops are short-lived, note the exact times they occur and cross-reference with:
+Event Viewer logs.
+Network traffic captures.
+Resource usage spikes.
+Client activity.
+Possible Causes and Solutions
+Network Interruptions: Fix network instability (e.g., firewall rules, routing issues).
+Unsigned Binds: Enforce LDAPS or update clients to support signing.
+Resource Limits: Increase MaxConnections or MaxPoolThreads via ntdsutil if exhausted (see LDAP policy settings).
+Certificate Issues: Ensure the server’s LDAPS certificate is valid and trusted by clients.
+Client Misconfiguration: Correct client LDAP settings or credentials.
+By following these steps, you should be able to pinpoint whether the issue stems from the server, network, or clients and take appropriate action. If the problem persists, let me know the specific findings (e.g., event IDs, errors), and I can refine the troubleshooting further!

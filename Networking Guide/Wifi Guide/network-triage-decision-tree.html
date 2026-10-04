@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network Triage Decision Tree — macOS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<style>
+  :root {
+    --ink: #1a2230;
+    --muted: #5a6b82;
+    --line: #d7dee8;
+    --accent: #0b6bcb;
+    --bg: #f6f8fb;
+    --card: #ffffff;
+    --warn: #b7791f;
+    --good: #1f7a4d;
+    --bad: #b23b3b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    margin: 0;
+    padding: 32px 24px 64px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+  h2 { font-size: 17px; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--line); }
+  .diagram { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; overflow-x: auto; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 10px 2px 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #eef3f9; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+  .note { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .diagram, table { border-color: #bbb; }
+    h2 { page-break-after: avoid; }
+    .diagram { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Network Triage Decision Tree — macOS Client</h1>
+  <p class="sub">Ticket intake &rarr; layer isolation &rarr; tool &amp; playbook. Companion to the macOS Wi-Fi Troubleshooting Guide and the Network Simulation Lab Guide. Work top-down; each branch narrows the fault to one owner.</p>
+
+  <h2>1. Master triage flow</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+    A([Ticket: connectivity problem]) --> B{On-site or remote/WFH?}
+    B -->|Remote / WFH| R1[Collect self-report:<br/>run WFH script<br/>Wi-Fi guide §6.4]
+    B -->|On-site| C{Wired test available?}
+    R1 --> C
+    C -->|Plug in Ethernet| D{Problem persists<br/>on wired?}
+    C -->|No wired option| E[Assume link suspect<br/>proceed to RF check]
+    D -->|Vanishes on wired| E
+    D -->|Persists on wired| F[Wi-Fi exonerated<br/>go to Wired/Path flow §3]
+
+    E --> G{RSSI &amp; SNR OK?<br/>wdutil info}
+    G -->|RSSI &lt; -70 or SNR &lt; 20| H[RF LAYER<br/>coverage / interference<br/>Wi-Fi guide §3.2, §4.1, §4.4]
+    G -->|Signal good| I{Associates &amp;<br/>authenticates?}
+    I -->|No / auth fails| J[AUTH LAYER<br/>802.1X / PSK / profile<br/>Wi-Fi guide §4.2, §4.6]
+    I -->|Yes, connected| K[Go to IP/Path flow §2]
+
+    classDef q fill:#eef3f9,stroke:#0b6bcb,color:#1a2230;
+    classDef rf fill:#fdf3e2,stroke:#b7791f,color:#1a2230;
+    classDef term fill:#e7f3ec,stroke:#1f7a4d,color:#1a2230;
+    class B,C,D,G,I q;
+    class H,J rf;
+    class F,K term;
+    </pre>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:#eef3f9;border:1px solid #0b6bcb;"></span> Decision point</span>
+    <span><span class="dot" style="background:#fdf3e2;border:1px solid #b7791f;"></span> Fault located</span>
+    <span><span class="dot" style="background:#e7f3ec;border:1px solid #1f7a4d;"></span> Continue to next flow</span>
+  </div>
+  <p class="note"><strong>Decisive move:</strong> the wired test. If plugging into Ethernet fixes it, the fault is the Wi-Fi link or RF environment — stop looking at everything above IP. If it persists on wired, Wi-Fi is cleared.</p>
+
+  <h2>2. Connected but not working — IP / path isolation</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+    A([Connected, still failing]) --> B{Valid IP?<br/>ipconfig getsummary en0}
+    B -->|169.254.x.x| C[DHCP LAYER<br/>no lease / wrong scope / VLAN<br/>Wi-Fi §4.3 · Lab 5.1]
+    B -->|Valid address| D{Ping default<br/>gateway?}
+    D -->|Fails| E[LOCAL SEGMENT<br/>mask/gateway, ARP,<br/>client isolation · Lab 5.3]
+    D -->|Succeeds| F{Ping public IP?<br/>ping 1.1.1.1}
+    F -->|Fails| G[PATH / ROUTING / ISP<br/>traceroute + mtr<br/>Lab 5.4 · Wi-Fi §6.1]
+    F -->|Succeeds| H{Resolve by name?<br/>dig vs dig @1.1.1.1}
+    H -->|Fails| I[DNS LAYER<br/>resolver/scoping<br/>Wi-Fi §4.3 · Lab 5.2]
+    H -->|Succeeds| J{Corporate app only?<br/>internet fine}
+    J -->|Yes| K[VPN / CORP PATH<br/>tunnel, split-tunnel, MTU<br/>Wi-Fi §6.5 · Lab 5.10]
+    J -->|No, all slow| L[PERFORMANCE<br/>latency/loss/congestion<br/>networkQuality · Lab 5.9]
+    J -->|Video calls only| M[REAL-TIME MEDIA<br/>jitter/loss/upload<br/>Video Conf doc · Zoom Stats]
+
+    classDef q fill:#eef3f9,stroke:#0b6bcb,color:#1a2230;
+    classDef fault fill:#fdf3e2,stroke:#b7791f,color:#1a2230;
+    class B,D,F,H,J q;
+    class C,E,G,I,K,L,M fault;
+    </pre>
+  </div>
+  <p class="note">Each test rules out one layer. Run them in order — don't debug DNS before confirming a valid IP, and don't debug routing before the gateway answers.</p>
+
+  <h2>3. Command shortcuts by branch</h2>
+  <div class="cols">
+    <table>
+      <tr><th>Branch</th><th>First command</th></tr>
+      <tr><td>RF / signal</td><td><code>sudo wdutil info</code></td></tr>
+      <tr><td>Auth / 802.1X</td><td><code>log stream --predicate 'process == "eapolclient"'</code></td></tr>
+      <tr><td>DHCP</td><td><code>ipconfig getsummary en0</code></td></tr>
+      <tr><td>Local segment</td><td><code>ping &lt;gateway&gt;</code> · <code>arp -a</code></td></tr>
+    </table>
+    <table>
+      <tr><th>Branch</th><th>First command</th></tr>
+      <tr><td>Path / ISP</td><td><code>traceroute 1.1.1.1</code> · <code>mtr</code></td></tr>
+      <tr><td>DNS</td><td><code>dig X</code> vs <code>dig @1.1.1.1 X</code></td></tr>
+      <tr><td>VPN / corp</td><td><code>scutil --dns</code> · <code>ping -D -s 1472</code></td></tr>
+      <tr><td>Performance</td><td><code>networkQuality -v -I en0</code></td></tr>
+    </table>
+  </div>
+
+  <h2>4. When to escalate vs. advise</h2>
+  <table>
+    <tr><th>Fault owner</th><th>Action</th></tr>
+    <tr><td>RF coverage / home interference</td><td>Advise user (router placement, 5 GHz, Ethernet, mesh); note root cause is outside corporate control.</td></tr>
+    <tr><td>Auth / 802.1X / RADIUS</td><td>Correlate client log + RADIUS log; escalate to identity/network team with both timestamps.</td></tr>
+    <tr><td>Corporate DHCP / DNS / routing / VLAN</td><td>Escalate to network team with the failing command output and scope.</td></tr>
+    <tr><td>VPN concentrator / MTU</td><td>Escalate to VPN/security team; attach underlay test proving the home link is healthy.</td></tr>
+    <tr><td>ISP</td><td>Advise user to contact ISP; attach traceroute/mtr showing where the path breaks.</td></tr>
+  </table>
+  <p class="note">Escalation packet (Wi-Fi guide §8): <code>wdutil info</code>, <code>wdutil diagnose</code> archive, <code>networkQuality</code> result, WFH script output taken <em>while</em> the problem occurred, and the wired-vs-wireless result.</p>
+</div>
+</body>
+</html>

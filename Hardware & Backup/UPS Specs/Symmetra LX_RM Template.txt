@@ -1,0 +1,170 @@
+PowerView LEDs:
+PowerView f/w:
+
+Status Menu:
+Vin:
+Vout: 
+Load w/o redundancy: 
+Load w/ n+_ redundancy: 
+Freq.in: 
+Freq.out: 
+Batt V: 
+Batt Cap: 
+Runtime: 
+# Batts: 
+# Bad Batts: 
+
+Capacity (kVA): 
+Fault tolerance (n+ ): 
+# Power modules: 
+# Bad Power modules: 
+
+Alarm Fault Tolerance (n+ ): 
+Alarm Runtime ( h, m): 
+Alarm Load (kVA): 
+
+Self-test: 
+Last Transfer: 
+Status: 
+IM: 
+RIM:
+
+Logging Menu from the Symmetra display (PowerView) as well as the one from the Network Management card installed in the Symmetra (with date and time stamps) (KBase # FA156131):
+64-
+63-
+62-
+61-
+60-
+59-
+58-
+57-
+56-
+55-
+54-
+53-
+52-
+51-
+50-
+49-
+48-
+47-
+46-
+45-
+44-
+43-
+42-
+41-
+40-
+39-
+38-
+37-
+36-
+35-
+34-
+33-
+32-
+31-
+30-
+29-
+28-
+27-
+26-
+25-
+24-
+23-
+22-
+21-
+20-
+19-
+18-
+17-
+16-
+15-
+14-
+13-
+12-
+11-
+10-
+9-
+8-
+7-
+6-
+5-
+4-
+3-
+2-
+1-
+
+Diags Menu:
+Fault & Diagnostics List: 
+MIM:
+Status: 
+Rev, SN, Mfg Date:
+Main FW: SLV: 
+SN: 
+Mfg Date:
+Raw Status:
+
+RIM:
+Status: 
+Rev, SN, Mfg Date:
+Main FW: , SLV: 
+SN: 
+Mfg Date: 
+Raw Status:
+
+Power Modules:
+PM1 Status:
+FW Rev:
+SN:
+Mfg Date:
+H/W Rev:
+Raw Status:
+
+PM2 Status:
+FW Rev:
+SN:
+Mfg Date:
+H/W Rev:
+Raw Status:
+
+PM3 Status:
+FW Rev:
+SN:
+Mfg Date:
+H/W Rev:
+Raw Status:
+
+PM4 Status:
+FW Rev:
+SN:
+Mfg Date:
+H/W Rev:
+Raw Status:
+
+PM5 Status:
+FW Rev:
+SN:
+Mfg Date:
+H/W Rev:
+Raw Status:
+
+Battery Modules:
+Main Frame of: 
+Status:
+Raw Status Data:
+Model and Serial Number of batteries from the white bar code sticker on the batteries
+
+Frame _ of _:
+Status _ of _:
+Raw status Data:
+Batt _ of _:
+Frame _: Module _:
+Level:
+Status:
+
+Rev, SN, Mfg Date: 
+FW Rev:
+SN:
+Mfg Date:
+H/w Rev:

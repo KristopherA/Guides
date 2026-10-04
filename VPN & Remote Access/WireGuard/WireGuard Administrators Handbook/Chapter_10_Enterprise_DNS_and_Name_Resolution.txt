@@ -1,0 +1,173 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 10 ENTERPRISE DNS
+AND NAME RESOLUTION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+Reliable DNS is essential for a successful WireGuard deployment. This
+chapter covers internal DNS design, split DNS, Active Directory
+integration, client configuration, and troubleshooting.
+
+===============================================================================
+2. DNS DESIGN PRINCIPLES
+===============================================================================
+
+Goals
+
+-   Resolve internal hostnames securely.
+-   Keep private zones off the public Internet.
+-   Minimize latency.
+-   Provide redundancy.
+
+Typical layout
+
+VPN Clients | wg0 | Internal DNS 10.60.40.10 | Authoritative DNS |
+Internal Services
+
+===============================================================================
+3. CLIENT DNS CONFIGURATION
+===============================================================================
+
+WireGuard configuration
+
+[Interface] DNS = 10.60.40.10
+
+Linux
+
+resolvectl status
+
+Windows
+
+ipconfig /all
+
+macOS
+
+scutil –dns
+
+Verify that the VPN DNS server is being used after the tunnel is
+established.
+
+===============================================================================
+4. SPLIT DNS
+===============================================================================
+
+Recommended
+
+Internal names: server01.corp.example
+
+Resolved by: 10.60.40.10
+
+Public names: www.example.com
+
+Resolved by: Public DNS
+
+Benefits
+
+-   Internal names remain private.
+-   Public traffic uses normal resolvers.
+-   Reduced unnecessary VPN traffic.
+
+===============================================================================
+5. ACTIVE DIRECTORY DNS
+===============================================================================
+
+Domain controllers typically provide DNS.
+
+Examples
+
+_auth._tcp.dc._msdcs.example.local dc01.example.local
+
+Validation
+
+nslookup dc01.example.local dig _ldap._tcp.dc._msdcs.example.local SRV
+
+===============================================================================
+6. DNS FORWARDING
+===============================================================================
+
+Internal DNS forwards unknown requests to:
+
+-   ISP resolver
+-   Public resolver
+-   Dedicated recursive resolver
+
+Avoid sending internal zones to external resolvers.
+
+===============================================================================
+7. COMMON TOOLS
+===============================================================================
+
+dig server01.example.internal
+
+host server01.example.internal
+
+nslookup server01.example.internal
+
+resolvectl query server01.example.internal
+
+Capture traffic
+
+tcpdump -ni wg0 port 53
+
+===============================================================================
+8. TROUBLESHOOTING
+===============================================================================
+
+Name does not resolve
+
+Check - Tunnel connected - Correct DNS server - Firewall permits UDP/TCP
+53 - Zone exists - Client cache
+
+Flush cache
+
+Linux (systemd-resolved)
+
+resolvectl flush-caches
+
+Windows
+
+ipconfig /flushdns
+
+macOS
+
+sudo dscacheutil -flushcache
+
+===============================================================================
+9. COMMON PROBLEMS
+===============================================================================
+
+Symptom: Can ping by IP but not hostname
+
+Likely cause: DNS configuration
+
+Symptom: Public names resolve, internal do not
+
+Likely cause: Missing split DNS or incorrect DNS server
+
+Symptom: Only some hosts resolve
+
+Likely cause: Zone replication or forwarding issue
+
+===============================================================================
+10. BEST PRACTICES
+===============================================================================
+
+-   Deploy at least two internal DNS servers.
+-   Use split DNS.
+-   Restrict zone transfers.
+-   Log DNS queries where appropriate.
+-   Monitor resolver health.
+-   Document internal zones.
+-   Test DNS after every VPN change.
+
+===============================================================================
+11. VALIDATION CHECKLIST
+===============================================================================
+
+[ ] VPN connected [ ] Internal DNS reachable [ ] Internal hostnames
+resolve [ ] External names resolve [ ] AD SRV records resolve [ ] DNS
+forwarding verified [ ] Client cache tested [ ] Packet capture confirms
+successful queries
+
+END OF CHAPTER 10

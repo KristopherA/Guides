@@ -1,0 +1,745 @@
+================================================================================
+  DAILY SYSADMIN PROCEDURES
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+
+================================================================================
+TOOLS REFERENCE
+================================================================================
+
+ACTIVE DIRECTORY
+  PowerShell RSAT     Windows RSAT module for AD management (Get-ADUser, etc.)
+  adcli               Linux CLI to query/join AD domains
+  ldap-utils          ldapsearch, ldapmodify, ldapadd (Ubuntu pkg: ldap-utils)
+  samba-tool          Samba domain admin CLI (if using Samba AD DC)
+  net (Samba)         net ads, net rpc commands
+  krb5-user           Kerberos client tools (kinit, klist, kdestroy)
+
+UBUNTU 24.04 LTS SERVERS
+  systemctl           Service management (start/stop/status/enable)
+  journalctl          Systemd log viewer
+  apt / apt-get       Package manager
+  ss                  Socket statistics (replaces netstat)
+  ufw                 Uncomplicated Firewall
+  fail2ban-client     Brute-force protection manager
+  htop / top          Process monitoring
+  df / du             Disk usage
+  ncdu                Interactive disk usage (apt install ncdu)
+  rsync               File sync/backup
+  cron / crontab      Task scheduling
+  logwatch            Log digest tool (apt install logwatch)
+  unattended-upgrades Auto security updates
+
+macOS WORKSTATIONS
+  dscl                Directory Services command line (user/group management)
+  dseditgroup         Group management
+  softwareupdate      CLI software update tool
+  mdutil              Spotlight index management
+  pmset               Power management settings
+  networksetup        Network configuration
+  profiles            MDM profile management
+  ssh / scp           Remote access and file copy
+  sysdiagnose         Full system diagnostic bundle
+  log                 macOS unified logging (log show, log stream)
+  security            Keychain and certificate management
+
+
+================================================================================
+SECTION 1: ACTIVE DIRECTORY
+================================================================================
+
+Assumes: RSAT installed (Windows) or ldap-utils + krb5-user installed (Ubuntu).
+For Linux AD tools, set AD_SERVER, AD_DOMAIN, and AD_BASE_DN in your shell profile.
+
+  export AD_SERVER="dc01.example.com"
+  export AD_DOMAIN="EXAMPLE"
+  export AD_BASE_DN="DC=example,DC=com"
+
+--------------------------------------------------------------------------------
+1.1 AUTHENTICATE / VERIFY KERBEROS TICKET
+--------------------------------------------------------------------------------
+
+Obtain a Kerberos ticket (Linux/macOS):
+  kinit administrator@EXAMPLE.COM
+
+List current tickets:
+  klist
+
+Destroy ticket:
+  kdestroy
+
+Test AD connectivity:
+  adcli info example.com
+
+--------------------------------------------------------------------------------
+1.2 USER ACCOUNT MANAGEMENT
+--------------------------------------------------------------------------------
+
+FIND A USER
+  # Linux: ldapsearch
+  ldapsearch -H ldap://$AD_SERVER -Y GSSAPI -b "$AD_BASE_DN" "(sAMAccountName=jsmith)" cn mail telephoneNumber
+
+  # PowerShell (Windows or pwsh on Linux with RSAT module)
+  Get-ADUser -Identity jsmith -Properties *
+
+  # Find all users in an OU
+  ldapsearch -H ldap://$AD_SERVER -Y GSSAPI -b "OU=Staff,DC=example,DC=com" "(objectClass=user)" sAMAccountName cn
+
+CREATE A USER (PowerShell)
+  New-ADUser -Name "Jane Smith" -SamAccountName jsmith -UserPrincipalName jsmith@example.com -Path "OU=Staff,DC=example,DC=com" -AccountPassword (Read-Host -AsSecureString) -Enabled $true
+
+DISABLE A USER
+  # PowerShell
+  Disable-ADAccount -Identity jsmith
+
+  # ldapmodify (Linux)
+  ldapmodify -H ldap://$AD_SERVER -Y GSSAPI <<EOF
+  dn: CN=Jane Smith,OU=Staff,DC=example,DC=com
+  changetype: modify
+  replace: userAccountControl
+  userAccountControl: 514
+  EOF
+
+ENABLE A USER
+  Enable-ADAccount -Identity jsmith
+
+DELETE A USER
+  Remove-ADUser -Identity jsmith -Confirm:$false
+
+RESET A PASSWORD (PowerShell)
+  Set-ADAccountPassword -Identity jsmith -Reset -NewPassword (Read-Host -AsSecureString) && Unlock-ADAccount -Identity jsmith
+
+UNLOCK A LOCKED ACCOUNT
+  Unlock-ADAccount -Identity jsmith
+
+  # Verify lock status
+  Get-ADUser -Identity jsmith -Properties LockedOut | Select-Object Name,LockedOut
+
+FORCE PASSWORD CHANGE AT NEXT LOGON
+  Set-ADUser -Identity jsmith -ChangePasswordAtLogon $true
+
+LIST ALL LOCKED ACCOUNTS
+  Search-ADAccount -LockedOut | Select-Object Name,SamAccountName,LastLogonDate
+
+LIST ACCOUNTS NOT LOGGED IN FOR 90+ DAYS
+  $cutoff = (Get-Date).AddDays(-90); Get-ADUser -Filter {LastLogonDate -lt $cutoff -and Enabled -eq $true} -Properties LastLogonDate | Select-Object Name,SamAccountName,LastLogonDate | Sort-Object LastLogonDate
+
+--------------------------------------------------------------------------------
+1.3 GROUP MANAGEMENT
+--------------------------------------------------------------------------------
+
+LIST MEMBERS OF A GROUP
+  # PowerShell
+  Get-ADGroupMember -Identity "IT-Admins" | Select-Object Name,SamAccountName
+
+  # ldapsearch
+  ldapsearch -H ldap://$AD_SERVER -Y GSSAPI -b "$AD_BASE_DN" "(cn=IT-Admins)" member
+
+ADD USER TO GROUP
+  Add-ADGroupMember -Identity "IT-Admins" -Members jsmith
+
+REMOVE USER FROM GROUP
+  Remove-ADGroupMember -Identity "IT-Admins" -Members jsmith -Confirm:$false
+
+LIST ALL GROUPS A USER BELONGS TO
+  Get-ADPrincipalGroupMembership jsmith | Select-Object Name | Sort-Object Name
+
+CREATE A GROUP
+  New-ADGroup -Name "Finance-Users" -GroupScope Global -GroupCategory Security -Path "OU=Groups,DC=example,DC=com"
+
+--------------------------------------------------------------------------------
+1.4 AD HEALTH CHECKS
+--------------------------------------------------------------------------------
+
+CHECK REPLICATION STATUS (run on Domain Controller)
+  repadmin /replsummary
+  repadmin /showrepl
+
+CHECK DNS HEALTH
+  dcdiag /test:dns /v
+
+FULL DOMAIN CONTROLLER DIAGNOSTIC
+  dcdiag /v
+
+CHECK SYSVOL/NETLOGON SHARES ARE ACCESSIBLE
+  net view \\dc01.example.com
+
+CHECK FSMO ROLE HOLDERS
+  netdom query fsmo
+
+CHECK AD SERVICES ARE RUNNING (Linux - remote via SSH)
+  ssh administrator@dc01.example.com "Get-Service adws,dns,kdc,netlogon | Select-Object Name,Status"
+
+CHECK AD TIME SYNC (critical for Kerberos)
+  w32tm /query /status
+  # Linux: compare local time vs DC
+  ntpdate -q $AD_SERVER
+
+--------------------------------------------------------------------------------
+1.5 COMPUTER ACCOUNT MANAGEMENT
+--------------------------------------------------------------------------------
+
+FIND A COMPUTER
+  Get-ADComputer -Filter {Name -like "WS-*"} -Properties LastLogonDate | Select-Object Name,LastLogonDate
+
+JOIN UBUNTU TO AD DOMAIN
+  sudo realm join --user=administrator example.com
+
+LEAVE DOMAIN
+  sudo realm leave example.com
+
+CHECK DOMAIN JOIN STATUS (Ubuntu)
+  realm list
+
+LIST COMPUTERS NOT SEEN IN 60 DAYS
+  $cutoff = (Get-Date).AddDays(-60); Get-ADComputer -Filter {LastLogonDate -lt $cutoff} -Properties LastLogonDate | Select-Object Name,LastLogonDate
+
+
+================================================================================
+SECTION 2: UBUNTU 24.04 LTS SERVERS
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1 SERVICE MANAGEMENT
+--------------------------------------------------------------------------------
+
+CHECK SERVICE STATUS
+  systemctl status nginx
+  systemctl status ssh
+  systemctl status fail2ban
+
+LIST ALL FAILED SERVICES
+  systemctl --failed
+
+START / STOP / RESTART A SERVICE
+  sudo systemctl start nginx
+  sudo systemctl stop nginx
+  sudo systemctl restart nginx
+
+RELOAD CONFIG WITHOUT RESTART (if supported)
+  sudo systemctl reload nginx
+
+ENABLE / DISABLE SERVICE AT BOOT
+  sudo systemctl enable nginx
+  sudo systemctl disable nginx
+
+CHECK ALL RUNNING SERVICES
+  systemctl list-units --type=service --state=running
+
+--------------------------------------------------------------------------------
+2.2 LOG MONITORING
+--------------------------------------------------------------------------------
+
+TAIL A SERVICE LOG IN REAL TIME
+  sudo journalctl -u nginx -f
+
+SHOW LOGS SINCE LAST BOOT
+  sudo journalctl -b
+
+SHOW LAST 100 LINES FOR A SERVICE
+  sudo journalctl -u ssh -n 100 --no-pager
+
+SHOW LOGS FOR LAST HOUR
+  sudo journalctl --since "1 hour ago"
+
+SHOW KERNEL MESSAGES
+  sudo journalctl -k -b
+
+SEARCH LOGS FOR ERRORS
+  sudo journalctl -p err -b --no-pager
+
+WATCH SYSTEM AUTH LOG (failed logins, sudo)
+  sudo tail -f /var/log/auth.log
+
+GENERATE DAILY LOG SUMMARY
+  sudo logwatch --output stdout --format text --range today --detail high
+
+--------------------------------------------------------------------------------
+2.3 PACKAGE & PATCH MANAGEMENT
+--------------------------------------------------------------------------------
+
+CHECK FOR AVAILABLE UPDATES
+  sudo apt update && apt list --upgradable 2>/dev/null
+
+APPLY SECURITY UPDATES ONLY
+  sudo apt-get upgrade --with-new-pkgs -y -o Dpkg::Options::="--force-confdef" $(apt-get upgrade --dry-run 2>/dev/null | grep "^Inst" | grep -i security | awk '{print $2}')
+
+FULL SYSTEM UPDATE
+  sudo apt update && sudo apt full-upgrade -y && sudo apt autoremove -y
+
+CHECK IF REBOOT IS REQUIRED
+  [ -f /var/run/reboot-required ] && cat /var/run/reboot-required || echo "No reboot required"
+
+CHECK UNATTENDED-UPGRADES STATUS
+  sudo systemctl status unattended-upgrades
+  sudo cat /var/log/unattended-upgrades/unattended-upgrades.log | tail -20
+
+LIST INSTALLED PACKAGES (search)
+  apt list --installed 2>/dev/null | grep nginx
+
+--------------------------------------------------------------------------------
+2.4 SYSTEM RESOURCE MONITORING
+--------------------------------------------------------------------------------
+
+CPU, MEMORY, PROCESS OVERVIEW
+  htop
+  # Non-interactive snapshot:
+  top -bn1 | head -20
+
+MEMORY USAGE
+  free -h
+
+DISK USAGE (all filesystems)
+  df -hT
+
+DISK USAGE BY DIRECTORY (top 10 largest)
+  sudo du -hx / --max-depth=2 2>/dev/null | sort -rh | head -10
+
+INTERACTIVE DISK USAGE BROWSER
+  sudo ncdu /
+
+OPEN NETWORK PORTS
+  ss -tlnp
+
+ACTIVE CONNECTIONS
+  ss -tnp state established
+
+LOAD AVERAGE
+  uptime
+
+CPU CORE COUNT AND MODEL
+  lscpu | grep -E "^CPU\(s\)|Model name|Thread"
+
+CHECK SWAP USAGE
+  swapon --show
+
+--------------------------------------------------------------------------------
+2.5 SECURITY & FIREWALL
+--------------------------------------------------------------------------------
+
+CHECK UFW STATUS AND RULES
+  sudo ufw status verbose
+
+ALLOW A PORT
+  sudo ufw allow 443/tcp
+
+DENY A PORT
+  sudo ufw deny 23/tcp
+
+ALLOW FROM SPECIFIC IP
+  sudo ufw allow from 10.0.0.0/8 to any port 22
+
+DELETE A RULE (by rule number)
+  sudo ufw status numbered
+  sudo ufw delete 3
+
+CHECK FAIL2BAN STATUS (all jails)
+  sudo fail2ban-client status
+
+CHECK SSH JAIL SPECIFICALLY
+  sudo fail2ban-client status sshd
+
+UNBAN AN IP ADDRESS
+  sudo fail2ban-client set sshd unbanip 203.0.113.45
+
+CHECK FOR LISTENING SERVICES THAT SHOULDN'T BE EXTERNAL
+  ss -tlnp | grep -v "127.0.0.1\|::1"
+
+SHOW RECENT FAILED SSH LOGINS
+  sudo grep "Failed password" /var/log/auth.log | tail -20
+
+SHOW SUCCESSFUL SUDO USAGE
+  sudo grep "sudo:" /var/log/auth.log | grep "COMMAND" | tail -20
+
+LIST USERS WITH LOGIN SHELLS
+  getent passwd | awk -F: '$7 ~ /bash|sh|zsh/ {print $1, $7}'
+
+CHECK FOR WORLD-WRITABLE FILES IN /etc
+  sudo find /etc -maxdepth 2 -perm -0002 -type f 2>/dev/null
+
+--------------------------------------------------------------------------------
+2.6 USER MANAGEMENT (LOCAL)
+--------------------------------------------------------------------------------
+
+CREATE A LOCAL USER (with home dir)
+  sudo adduser jsmith
+
+ADD USER TO SUDO GROUP
+  sudo usermod -aG sudo jsmith
+
+LOCK A USER ACCOUNT
+  sudo passwd -l jsmith
+
+UNLOCK A USER ACCOUNT
+  sudo passwd -u jsmith
+
+DELETE A USER (and home directory)
+  sudo deluser --remove-home jsmith
+
+LIST USERS LOGGED IN RIGHT NOW
+  who
+
+LIST LAST LOGINS
+  last -n 20
+
+FORCE A USER TO LOG OUT (by PID of their session)
+  who -u        # find PID
+  sudo kill -HUP <PID>
+
+--------------------------------------------------------------------------------
+2.7 SSH MANAGEMENT
+--------------------------------------------------------------------------------
+
+ADD PUBLIC KEY FOR A USER
+  sudo -u jsmith mkdir -p /home/jsmith/.ssh && sudo -u jsmith tee -a /home/jsmith/.ssh/authorized_keys <<< "ssh-ed25519 AAAA... user@host"
+
+SET CORRECT PERMISSIONS ON SSH FILES
+  sudo chmod 700 /home/jsmith/.ssh && sudo chmod 600 /home/jsmith/.ssh/authorized_keys && sudo chown -R jsmith:jsmith /home/jsmith/.ssh
+
+TEST SSH CONFIG BEFORE RELOAD
+  sudo sshd -t
+
+RELOAD SSH WITHOUT DROPPING SESSIONS
+  sudo systemctl reload ssh
+
+SHOW ACTIVE SSH SESSIONS
+  ss -tnp | grep ":22"
+
+BLOCK SSH FROM THE INTERNET (keep only LAN)
+  sudo ufw delete allow 22/tcp && sudo ufw allow from 10.0.0.0/8 to any port 22
+
+--------------------------------------------------------------------------------
+2.8 BACKUP & STORAGE
+--------------------------------------------------------------------------------
+
+RSYNC A DIRECTORY TO BACKUP SERVER
+  rsync -avz --delete /var/www/ backup@10.0.1.50:/backups/web/
+
+VERIFY RSYNC DRY RUN FIRST
+  rsync -avzn --delete /var/www/ backup@10.0.1.50:/backups/web/
+
+CHECK LAST BACKUP TIMESTAMP
+  ls -lh /backups/web/ | tail -5
+
+CHECK LVM VOLUME SIZES
+  sudo lvdisplay | grep -E "LV Name|LV Size"
+
+EXTEND AN LVM VOLUME (example: extend /home by 10G)
+  sudo lvextend -L +10G /dev/ubuntu-vg/ubuntu-lv-home && sudo resize2fs /dev/ubuntu-vg/ubuntu-lv-home
+
+CHECK DISK HEALTH (SMART)
+  sudo smartctl -H /dev/sda
+
+
+================================================================================
+SECTION 3: macOS WORKSTATIONS
+================================================================================
+
+Note: Most commands require admin privileges. Run with sudo where indicated.
+Remote access assumes SSH is enabled: System Settings > General > Sharing > Remote Login.
+
+--------------------------------------------------------------------------------
+3.1 REMOTE ACCESS
+--------------------------------------------------------------------------------
+
+SSH INTO A MAC
+  ssh admin@macbook-01.example.com
+
+COPY FILE TO/FROM MAC
+  scp /local/file.txt admin@macbook-01.example.com:/Users/admin/Desktop/
+  scp admin@macbook-01.example.com:/path/to/file.txt ./
+
+RUN A COMMAND REMOTELY
+  ssh admin@macbook-01.example.com "uptime && sw_vers"
+
+--------------------------------------------------------------------------------
+3.2 SYSTEM INFORMATION
+--------------------------------------------------------------------------------
+
+FULL SYSTEM SOFTWARE/HARDWARE OVERVIEW
+  system_profiler SPSoftwareDataType SPHardwareDataType
+
+MACOS VERSION
+  sw_vers
+
+CPU / MEMORY USAGE (top snapshot)
+  top -l 1 | head -20
+
+DISK USAGE
+  df -hT
+
+UPTIME AND LOAD
+  uptime
+
+LIST LOGGED IN USERS
+  who
+
+IP ADDRESS
+  ipconfig getifaddr en0
+
+ALL NETWORK INTERFACES
+  ifconfig | grep -E "^en|inet "
+
+--------------------------------------------------------------------------------
+3.3 USER ACCOUNT MANAGEMENT
+--------------------------------------------------------------------------------
+
+LIST ALL LOCAL USERS
+  dscl . list /Users | grep -v "^_"
+
+GET USER INFO
+  dscl . read /Users/jsmith
+
+CREATE A LOCAL ADMIN USER
+  sudo dscl . create /Users/jsmith
+  sudo dscl . create /Users/jsmith RealName "Jane Smith"
+  sudo dscl . create /Users/jsmith NFSHomeDirectory /Users/jsmith
+  sudo dscl . create /Users/jsmith UserShell /bin/zsh
+  sudo dscl . create /Users/jsmith UniqueID 502
+  sudo dscl . create /Users/jsmith PrimaryGroupID 20
+  sudo dscl . passwd /Users/jsmith "TemporaryPass1!"
+  sudo dscl . append /Groups/admin GroupMembership jsmith
+  sudo createhomedir -c -u jsmith
+
+DELETE A LOCAL USER
+  sudo dscl . delete /Users/jsmith
+  sudo rm -rf /Users/jsmith   # remove home dir if desired
+
+RESET LOCAL PASSWORD
+  sudo dscl . passwd /Users/jsmith "NewPassword1!"
+
+DISABLE A USER (set shell to nologin)
+  sudo dscl . change /Users/jsmith UserShell /bin/zsh /usr/bin/false
+
+RE-ENABLE A USER
+  sudo dscl . change /Users/jsmith UserShell /usr/bin/false /bin/zsh
+
+ADD USER TO ADMIN GROUP
+  sudo dseditgroup -o edit -a jsmith -t user admin
+
+REMOVE USER FROM ADMIN GROUP
+  sudo dseditgroup -o edit -d jsmith -t user admin
+
+LIST MEMBERS OF ADMIN GROUP
+  dseditgroup -o checkmember -m jsmith admin
+
+--------------------------------------------------------------------------------
+3.4 SOFTWARE UPDATES
+--------------------------------------------------------------------------------
+
+CHECK FOR AVAILABLE UPDATES
+  softwareupdate -l
+
+INSTALL ALL AVAILABLE UPDATES (no restart)
+  sudo softwareupdate -i -a
+
+INSTALL UPDATES AND RESTART IF NEEDED
+  sudo softwareupdate -i -a -R
+
+INSTALL A SPECIFIC UPDATE
+  sudo softwareupdate -i "macOS Sequoia 15.4-15.4"
+
+CHECK LAST UPDATE DATE
+  defaults read /Library/Receipts/InstallHistory.plist | grep -A3 "displayName" | tail -20
+
+--------------------------------------------------------------------------------
+3.5 SERVICE / PROCESS MANAGEMENT
+--------------------------------------------------------------------------------
+
+LIST ALL RUNNING LAUNCHDAEMONS
+  sudo launchctl list | grep -v "^-"
+
+START A LAUNCH DAEMON
+  sudo launchctl load /Library/LaunchDaemons/com.example.service.plist
+
+STOP A LAUNCH DAEMON
+  sudo launchctl unload /Library/LaunchDaemons/com.example.service.plist
+
+KILL A PROCESS BY NAME
+  sudo pkill -9 -f "Activity Monitor"
+
+FIND WHAT'S USING A PORT
+  sudo lsof -iTCP:443 -sTCP:LISTEN
+
+LIST ALL OPEN NETWORK CONNECTIONS
+  netstat -an | grep ESTABLISHED
+
+--------------------------------------------------------------------------------
+3.6 NETWORK MANAGEMENT
+--------------------------------------------------------------------------------
+
+RENEW DHCP LEASE
+  sudo ipconfig set en0 DHCP
+
+FLUSH DNS CACHE
+  sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+
+SET STATIC IP
+  sudo networksetup -setmanual Wi-Fi 10.0.1.100 255.255.255.0 10.0.1.1
+
+SET DNS SERVERS
+  sudo networksetup -setdnsservers Wi-Fi 10.0.0.53 8.8.8.8
+
+TEST DNS RESOLUTION
+  dscacheutil -q host -a name google.com
+
+LIST ALL NETWORK SERVICES
+  networksetup -listallnetworkservices
+
+TURN ON/OFF WIFI
+  networksetup -setairportpower en0 off
+  networksetup -setairportpower en0 on
+
+--------------------------------------------------------------------------------
+3.7 SECURITY CHECKS
+--------------------------------------------------------------------------------
+
+CHECK FILEVAULT STATUS
+  fdesetup status
+
+ENABLE FILEVAULT (interactive)
+  sudo fdesetup enable
+
+CHECK FIREWALL STATUS
+  /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+
+ENABLE FIREWALL
+  sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+
+LIST FIREWALL RULES
+  /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
+
+CHECK GATEKEEPER STATUS
+  spctl --status
+
+ENABLE GATEKEEPER
+  sudo spctl --master-enable
+
+LIST INSTALLED CERTIFICATES
+  security find-certificate -a -p /Library/Keychains/System.keychain | openssl x509 -noout -subject -enddate 2>/dev/null
+
+CHECK FOR RECENTLY MODIFIED FILES IN /Applications
+  find /Applications -maxdepth 2 -newer /tmp -name "*.app" 2>/dev/null
+
+LIST STARTUP ITEMS (per-user)
+  ls ~/Library/LaunchAgents/
+  ls /Library/LaunchAgents/
+  ls /Library/LaunchDaemons/
+
+--------------------------------------------------------------------------------
+3.8 MDM PROFILE MANAGEMENT
+--------------------------------------------------------------------------------
+
+LIST INSTALLED MDM PROFILES
+  sudo profiles list -all
+
+SHOW DETAIL ON A PROFILE
+  sudo profiles show -all
+
+REMOVE A SPECIFIC PROFILE
+  sudo profiles remove -identifier com.example.wifi.profile
+
+FORCE MDM CHECK-IN
+  sudo profiles renew -type enrollment
+
+--------------------------------------------------------------------------------
+3.9 LOGS AND DIAGNOSTICS
+--------------------------------------------------------------------------------
+
+STREAM LIVE SYSTEM LOG
+  log stream --predicate 'eventMessage contains "error"' --level error
+
+SHOW LAST 500 SYSTEM LOG LINES
+  log show --last 30m --style syslog | tail -100
+
+SHOW CRASH REPORTS
+  ls ~/Library/Logs/DiagnosticReports/
+
+COLLECT FULL SYSDIAGNOSE BUNDLE
+  sudo sysdiagnose -f /tmp/
+
+SHOW KERNEL PANICS
+  log show --predicate 'eventMessage contains "panic"' --last 7d
+
+DISK HEALTH CHECK
+  diskutil verifyDisk disk0
+
+CHECK SMART STATUS
+  diskutil info disk0 | grep -i smart
+
+
+================================================================================
+SECTION 4: QUICK REFERENCE — DAILY CHECKLIST
+================================================================================
+
+Morning Checks (run these each day):
+
+  ACTIVE DIRECTORY
+  [ ] Check for failed replication:      repadmin /replsummary
+  [ ] Unlock any overnight lockouts:     Search-ADAccount -LockedOut | Unlock-ADAccount
+  [ ] Review AD event logs (DC):         Get-EventLog -LogName Security -Newest 50 | Where-Object {$_.EventID -in 4625,4740}
+
+  UBUNTU SERVERS
+  [ ] Failed services:                   systemctl --failed
+  [ ] Check reboot-required:             [ -f /var/run/reboot-required ] && cat /var/run/reboot-required
+  [ ] Disk usage warning (>80%):         df -h | awk 'NR>1 && $5+0 >= 80 {print}'
+  [ ] Failed login attempts:             sudo grep "Failed password" /var/log/auth.log | grep "$(date '+%b %e')" | wc -l
+  [ ] Fail2ban bans:                     sudo fail2ban-client status sshd | grep "Currently banned"
+  [ ] Pending updates:                   apt list --upgradable 2>/dev/null | grep -c upgradable
+
+  macOS WORKSTATIONS
+  [ ] Pending updates (remote sample):   ssh admin@macbook-01 "softwareupdate -l 2>&1 | grep -c 'recommended'"
+  [ ] FileVault status (sample):         ssh admin@macbook-01 "fdesetup status"
+  [ ] Firewall status (sample):          ssh admin@macbook-01 "/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate"
+
+
+================================================================================
+SECTION 5: COMMON TROUBLESHOOTING ONE-LINERS
+================================================================================
+
+USER CAN'T LOG IN (AD)
+  # Check if account is locked/expired
+  Get-ADUser -Identity jsmith -Properties LockedOut,PasswordExpired,AccountExpirationDate | Select-Object Name,LockedOut,PasswordExpired,AccountExpirationDate
+
+SERVICE WON'T START (Ubuntu)
+  # Get last 50 lines of service journal
+  sudo journalctl -u servicename -n 50 --no-pager
+
+DISK FULL ON SERVER (Ubuntu)
+  # Find files >100MB
+  sudo find / -xdev -size +100M -exec ls -lh {} \; 2>/dev/null | sort -k5 -rh | head -20
+
+HIGH LOAD AVERAGE (Ubuntu)
+  # Find top CPU consumers
+  ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -15
+
+PORT NOT RESPONDING (Ubuntu)
+  # Check if service is listening
+  ss -tlnp | grep :80
+  # Test from another host
+  nc -zv 10.0.0.10 80
+
+CANNOT SSH TO MAC
+  # Verify SSH service is enabled on the Mac
+  ssh admin@macbook-01 "sudo systemsetup -getremotelogin" 2>/dev/null || echo "SSH not reachable"
+
+KERBEROS AUTHENTICATION FAILING (Linux)
+  # Check time drift vs AD (must be within 5 minutes)
+  ntpdate -q $AD_SERVER && date
+
+MAC KEEPS LOSING AD BIND
+  # Re-join from command line
+  sudo dsconfigad -add example.com -username administrator -password - -computer $(hostname -s)
+
+FIND WHAT PROCESS IS EATING DISK I/O (Ubuntu)
+  sudo iotop -o -d 2 -n 5
+
+CHECK IF UBUNTU IS ENROLLED IN AD REALM
+  realm list && id administrator@example.com
+
+================================================================================
+END OF DOCUMENT
+================================================================================

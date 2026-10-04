@@ -1,0 +1,210 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 18 MONITORING AND
+LOGGING
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+Reliable monitoring allows administrators to detect VPN failures before
+users report them. This chapter covers operational monitoring, logging,
+alerting, and dashboard design for enterprise WireGuard deployments.
+
+===============================================================================
+2. KEY HEALTH INDICATORS
+===============================================================================
+
+Monitor continuously:
+
+-   Latest handshake age
+-   Bytes transmitted/received
+-   Tunnel availability
+-   CPU utilization
+-   Memory usage
+-   Packet loss
+-   Latency
+-   Firewall counters
+
+===============================================================================
+3. WIREGUARD STATUS
+===============================================================================
+
+Display status
+
+wg
+
+Detailed
+
+wg show
+
+Useful fields
+
+latest handshake transfer endpoint allowed ips
+
+Healthy tunnel
+
+Latest handshake within expected interval Transfer counters increasing
+
+===============================================================================
+4. SYSTEMD LOGGING
+===============================================================================
+
+Current logs
+
+journalctl -u wg-quick@wg0
+
+Follow logs
+
+journalctl -u wg-quick@wg0 -f
+
+Recent boot
+
+journalctl -u wg-quick@wg0 -b
+
+Search
+
+journalctl -u wg-quick@wg0 | grep handshake
+
+===============================================================================
+5. FIREWALL MONITORING
+===============================================================================
+
+iptables
+
+iptables -L -n -v iptables -t nat -L -n -v
+
+nftables
+
+nft list ruleset
+
+Watch counters for unexpected drops or unused rules.
+
+===============================================================================
+6. NETWORK MONITORING
+===============================================================================
+
+Interface statistics
+
+ip -s link show wg0
+
+Socket summary
+
+ss -s
+
+Routing
+
+ip route ip rule
+
+Packet capture
+
+tcpdump -ni wg0 tcpdump -ni any udp port 51820
+
+===============================================================================
+7. CENTRALIZED LOGGING
+===============================================================================
+
+Recommended platforms
+
+-   Graylog
+-   Elastic Stack
+-   Splunk
+-   Microsoft Sentinel
+
+Forward
+
+-   System journal
+-   Firewall logs
+-   Authentication logs
+-   Configuration changes
+
+Example alert
+
+Condition: No handshake for 5 minutes
+
+Action: Notify operations team
+
+===============================================================================
+8. PROMETHEUS AND GRAFANA
+===============================================================================
+
+Typical metrics
+
+-   Tunnel status
+-   CPU
+-   Memory
+-   Interface throughput
+-   Packet errors
+-   Disk usage
+-   Latency
+
+Dashboard panels
+
+VPN Availability Handshake Age Traffic Rate Top Peers System Health
+
+===============================================================================
+9. ALERTING
+===============================================================================
+
+Generate alerts for:
+
+-   Tunnel down
+-   Stale handshake
+-   High CPU
+-   High packet loss
+-   Firewall rule changes
+-   Configuration changes
+-   Disk full
+-   Time synchronization failures
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+No logs
+
+Check
+
+systemctl status wg-quick@wg0
+
+No traffic
+
+Check
+
+wg show ip route iptables -L -n -v
+
+Unexpected disconnects
+
+Review
+
+journalctl Firewall Internet connectivity Endpoint DNS
+
+===============================================================================
+11. LOG RETENTION
+===============================================================================
+
+Recommendations
+
+Operational logs 90 days Security logs 1 year Audit logs Per policy
+
+Back up SIEM configuration regularly.
+
+===============================================================================
+12. BEST PRACTICES
+===============================================================================
+
+-   Monitor every gateway.
+-   Alert on stale handshakes.
+-   Review dashboards daily.
+-   Forward logs to a central SIEM.
+-   Test alerting monthly.
+-   Document monitoring thresholds.
+-   Correlate VPN events with firewall and authentication logs.
+
+===============================================================================
+13. MONITORING CHECKLIST
+===============================================================================
+
+[ ] Tunnel health monitored [ ] Firewall counters reviewed [ ] Logs
+centralized [ ] Alerts tested [ ] Dashboard operational [ ] Time
+synchronized [ ] Retention policy documented
+
+END OF CHAPTER 18

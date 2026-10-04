@@ -1,0 +1,131 @@
+===============================================================================
+ macOS NETWORK & Wi-Fi TROUBLESHOOTING — QUICK REFERENCE (print / pin)
+ Companion to the full guides in this folder. Run everything below as needed;
+ many read commands need sudo. Interface is usually en0.
+===============================================================================
+
+-------------------------------------------------------------------------------
+ TRIAGE ORDER (isolate bottom-up — see Triage Decision Tree)
+-------------------------------------------------------------------------------
+ 1 RF/signal  ->  2 Auth  ->  3 DHCP/IP  ->  4 DNS  ->  5 Path/Perf
+ DECISIVE TEST: plug in Ethernet. Fixed on wired = Wi-Fi/RF. Still broken = not Wi-Fi.
+
+-------------------------------------------------------------------------------
+ FIRST-MOVE COMMANDS
+-------------------------------------------------------------------------------
+ sudo wdutil info                 Full Wi-Fi + network status (RSSI, SNR, chan, IP, DNS)
+ ipconfig getsummary en0          DHCP lease, router, DNS
+ scutil --dns                     Resolver actually in use
+ ping -c 5 <gateway>              Local segment reachability
+ dig <name> / dig @1.1.1.1 <name> Configured resolver vs. bypass (isolates DNS)
+ traceroute 1.1.1.1               Where the path breaks
+ networkQuality -v -I en0         Throughput + responsiveness (RPM)
+ arp -a                           ARP table (dup IP / gateway MAC)
+ netstat -rn                      Routing table
+
+-------------------------------------------------------------------------------
+ SIGNAL THRESHOLDS (from wdutil / WiFi Explorer)
+-------------------------------------------------------------------------------
+ RSSI   >= -60 good | -60..-70 ok | < -70 problem (VoIP/video need >= -67)
+ SNR    >= 25 good  | 20..25 ok   | < 20 problem (retries, rate drops)
+ NOISE  <= -90 good | -85..-90 ok | > -85 suspect interference
+ RULE: good RSSI + poor SNR = INTERFERENCE, not coverage.
+
+-------------------------------------------------------------------------------
+ FAULT SIGNATURES -> LIKELY OWNER
+-------------------------------------------------------------------------------
+ 169.254.x.x address ............ DHCP failed (no lease / wrong VLAN/scope)
+ Good RSSI, low SNR ............. RF interference (spectrum, non-Wi-Fi sources)
+ RSSI < -70 .................... Coverage (distance/walls) — physical fix
+ Ping IP works, name fails ..... DNS (check scutil --dns; dig @known-good)
+ Gateway pings, internet won't .. Path / routing / ISP
+ Local ok, remote fails ........ Wrong mask or default gateway
+ Small pings ok, large stall ... MTU/fragmentation (ping -D -s 1472)
+ Speed test fine, calls stutter . Jitter/loss/upload — see Video Conf doc; check Zoom Statistics
+ Frozen to others, see them fine . Upload starved (Zoom Stats "Send" loss/jitter)
+ Auth spinner / "wrong password". 802.1X cert trust, stale profile, or PSK
+
+-------------------------------------------------------------------------------
+ INTERFACE / SAVED-NETWORK CONTROL
+-------------------------------------------------------------------------------
+ networksetup -setairportpower en0 off ; ... on      Power-cycle Wi-Fi
+ networksetup -getairportnetwork en0                 Current SSID
+ networksetup -listpreferredwirelessnetworks en0     Saved networks
+ networksetup -removepreferredwirelessnetwork en0 "SSID"   Forget (fix stale profile)
+ ipconfig getifaddr en0                              Just the IPv4 address
+
+-------------------------------------------------------------------------------
+ IPv6 / DUAL-STACK
+-------------------------------------------------------------------------------
+ ifconfig en0 | grep inet6        Show IPv6 addresses (link-local fe80 + global)
+ ping6 -c 5 <ipv6-or-host>        IPv6 reachability
+ dig AAAA <name>                  IPv6 DNS record
+ networksetup -setv6off Wi-Fi     Test-only: disable IPv6 to isolate dual-stack issue
+ (re-enable: networksetup -setv6automatic Wi-Fi)
+
+-------------------------------------------------------------------------------
+ AUTH / 802.1X
+-------------------------------------------------------------------------------
+ log stream --predicate 'process == "eapolclient"'   Live EAP exchange
+ sudo profiles show -type configuration              Installed Wi-Fi/cert payloads
+ security find-identity -v                           Client certs (check expiry)
+ Buckets: cert trust | credential/policy | profile config mismatch
+
+-------------------------------------------------------------------------------
+ CAPTURE (monitor mode = the useful one; disconnects Wi-Fi)
+-------------------------------------------------------------------------------
+ sudo tcpdump -I -i en0 -w cap.pcap                  Monitor-mode capture
+ Wireless Diagnostics -> Window -> Sniffer           Pick channel/width (preferred)
+ Promiscuous (default, tcpdump -i en0) is near-useless on encrypted Wi-Fi.
+
+-------------------------------------------------------------------------------
+ EVIDENCE / ESCALATION PACKET
+-------------------------------------------------------------------------------
+ sudo wdutil info                 Status snapshot
+ sudo wdutil diagnose             Full Wi-Fi diagnostic archive
+ networkQuality -v -I en0         Perf result
+ WiFi Explorer scan + History CSV export
+ .pcap if RF-related | location, time window, # affected | wired-vs-wireless result
+
+-------------------------------------------------------------------------------
+ WFH / REMOTE (have the endpoint report on itself)
+-------------------------------------------------------------------------------
+ Isolate owner: 1 Wi-Fi link  2 home LAN/router  3 ISP  4 corp VPN
+ Push/collect the §6.4 script; run it WHILE the problem is happening.
+ Automated: scripts/net-triage-snapshot.sh (classifies layer) | zoom-rtc-check.sh
+ VPN: test underlay first; split vs full tunnel; scutil --dns for DNS scoping.
+
+-------------------------------------------------------------------------------
+ VIDEO CALLS (Zoom) — real-time media, NOT a bandwidth problem
+-------------------------------------------------------------------------------
+ FIRST: Zoom > Settings > Statistics (per-stream latency/jitter/loss, Send vs Receive)
+ Thresholds: latency <150ms | jitter <30ms | loss <1%  (jitter is the usual culprit)
+ Ports: media UDP 8801-8810 + 3478/3479; fallback TCP 443 (= silent quality drop)
+ Check UDP in use:  sudo lsof -nP -iUDP | grep -i zoom   (only TCP 443 = UDP blocked)
+ Send-side bad = upload starved | VPN full-tunnel hairpins media (split-tunnel it)
+
+-------------------------------------------------------------------------------
+ KEY WIRESHARK DISPLAY FILTERS
+-------------------------------------------------------------------------------
+ wlan.fc.type_subtype == 0x0c     Deauth (flood = attack; add reason_code column)
+ wlan.fc.retry == 1               Retries (RF trouble)
+ eapol || eap                     WPA handshake / 802.1X (eap.code==4 = failure)
+ dhcp                             DORA (Discover w/ no Offer = no DHCP/VLAN)
+ dns.flags.rcode != 0             DNS errors (2=SERVFAIL, 3=NXDOMAIN)
+ tcp.analysis.flags               All TCP problems (retransmit=loss, zero_window=host)
+ icmp.type==3 && icmp.code==4     Fragmentation-needed / MTU smoking gun
+ udp.port>=8801 && udp.port<=8810 Zoom media (present=good UDP path; absent=TCP fallback)
+ ip.dsfield.dscp != 0             QoS marking survived (EF=46 voice, AF41=34 video)
+
+-------------------------------------------------------------------------------
+ CLEANUP (if you impaired the link for testing)
+-------------------------------------------------------------------------------
+ sudo pfctl -d ; sudo dnctl -q flush     Remove dummynet impairment
+ Toggle Network Link Conditioner OFF (System Settings > Developer)
+
+===============================================================================
+ Full detail: macOS Wi-Fi Troubleshooting Guide | Simulation Lab Guide |
+ Triage Decision Tree | Wireshark Filter Primer | Security IR Runbook |
+ Ops Templates | Onboarding Checklist | Video Conferencing Troubleshooting
+ (all in this folder)
+===============================================================================

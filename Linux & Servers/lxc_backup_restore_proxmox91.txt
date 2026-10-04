@@ -1,0 +1,249 @@
+================================================================================
+  LXC CONTAINER BACKUP & RESTORE — PROXMOX VE 9.1
+  Covers GUI and CLI | Same-Server Revert | Cross-Server Migration
+================================================================================
+
+--------------------------------------------------------------------------------
+1. OVERVIEW
+--------------------------------------------------------------------------------
+Proxmox VE stores LXC backups as compressed archives (.tar.zst, .tar.gz, .tar.lzo).
+Backups can be triggered manually, scheduled, or automated via CLI, and restored
+to the same server or migrated to another node.
+
+NOTE: All CLI examples assume root on the Proxmox host.
+      Replace <vmid> with your container ID (e.g. 101) and
+      <storage> with your storage target (e.g. local, tank-backup).
+
+
+--------------------------------------------------------------------------------
+2. BACKUP PROCEDURES
+--------------------------------------------------------------------------------
+
+2.1  GUI — Manual Backup
+------------------------
+1. Select the LXC container in the left tree (node → 101)
+2. Click the Backup tab in the right panel
+3. Click Backup Now
+4. Choose Storage target from the dropdown (e.g. local, tank-backup)
+5. Set Compression: ZSTD (recommended) or GZip
+6. Set Mode: Snapshot (live) or Stop (safest — briefly shuts container down)
+7. Click Backup — monitor progress in the Task Log (bottom panel)
+
+  [ SUCCESS ]
+  INFO: starting new backup job: CT 101
+  INFO: archive transfer time: 12s
+  INFO: Finished Backup of CT 101 (00:00:14)
+  TASK OK
+
+  [ FAILURE ]
+  ERROR: unable to open archive
+  ERROR: storage 'local' is not writable or out of space
+  TASK ERROR: job errors
+
+
+2.2  GUI — Scheduled Backup
+----------------------------
+1. Go to Datacenter → Backup in the left panel
+2. Click Add to create a new schedule
+3. Set Node, Storage, Schedule (cron-style), and VM/CT selection
+   (Use 'All' or select specific CTs)
+4. Enable Email on error/always for notifications
+   (Requires Postfix or SMTP relay configured)
+5. Click Create — schedule activates immediately
+
+
+2.3  CLI — Manual Backup
+--------------------------
+Backup a single container (running, snapshot mode):
+  vzdump 101 --storage local --compress zstd --mode snapshot
+
+Backup all containers to NFS storage, stop mode:
+  vzdump --all --storage tank-backup --compress zstd --mode stop
+
+Backup with email notification on failure:
+  vzdump 101 --storage local --compress zstd --mailto admin@example.com
+
+Key flags:
+  --storage <id>       Target storage (pvesm status to list available)
+  --compress           zstd | gzip | lzo | 0 (none)
+  --mode               snapshot | suspend | stop
+  --dumpdir            Override path, e.g. /mnt/pve/nas/dump
+  --notes-template     Use {{hostname}} {{vmid}} for automatic backup notes
+
+  [ SUCCESS ]
+  INFO: starting new backup job: CT 101
+  INFO: backup file: /var/lib/vz/dump/vzdump-lxc-101-2025_06_01-02_00_01.tar.zst
+  INFO: archive transfer time: 8s
+  INFO: Finished Backup of CT 101 (00:00:10)
+  TASK OK
+
+  [ FAILURE ]
+  ERROR: CT 101 is locked (backup)
+  ERROR: storage 'tank-backup' does not exist
+  TASK ERROR: job errors
+
+
+--------------------------------------------------------------------------------
+3. RESTORE — REVERT ON SAME SERVER
+--------------------------------------------------------------------------------
+Use this branch to roll back a container to an earlier backup on the same host.
+The existing container can be overwritten or a new VMID assigned.
+
+WARNING: Restoring overwrites or replaces the container. Stop the container
+         first. To keep the existing CT running, restore to a new VMID instead.
+
+
+3.1  GUI — Revert Same Server
+------------------------------
+1. Select the container → Backup tab (e.g. CT 101)
+2. Find the backup entry you want to restore from the list
+   (shows date, size, and storage)
+3. Click Restore
+4. Set CT ID: same ID to overwrite, or new ID to keep both
+   (new ID = safe side-by-side test restore)
+5. Set Storage for the new root disk (usually same as original)
+6. Check 'Start after restore' if desired
+7. Click Restore — CT is automatically stopped if running
+
+  [ SUCCESS ]
+  INFO: restore container 101 from
+        '/var/lib/vz/dump/vzdump-lxc-101-2025_05_01.tar.zst'
+  INFO: Total bytes written: 1284530000 (1.2GiB)
+  INFO: successfully restored CT 101
+  TASK OK
+
+  [ FAILURE ]
+  ERROR: CT 101 is running - stop it first
+  ERROR: target storage 'local-lvm' has not enough space
+  ERROR: can't open '/var/lib/vz/dump/vzdump-lxc-101-2025_05_01.tar.zst':
+         No such file
+  TASK ERROR: restore failed
+
+
+3.2  CLI — Revert Same Server
+------------------------------
+Stop and restore to same VMID (overwrites current container):
+  pct stop 101
+  pct restore 101 /var/lib/vz/dump/vzdump-lxc-101-2025_05_01-02_00_00.tar.zst \
+    --storage local-lvm --force
+  pct start 101
+
+  NOTE: --force destroys and replaces the existing container.
+        Omit to abort if VMID already exists.
+
+Restore to a new VMID (non-destructive, for testing):
+  pct restore 201 /var/lib/vz/dump/vzdump-lxc-101-2025_05_01-02_00_00.tar.zst \
+    --storage local-lvm
+  pct start 201
+
+Key flags for pct restore:
+  --storage <id>      Destination storage for the root disk
+  --force             Destroy existing VMID before restore
+  --unprivileged      Restore as unprivileged container (0|1)
+  --hostname <name>   Override hostname on restore
+  --start             Start container immediately after restore
+
+  [ SUCCESS ]
+  restore CT 101: successfully restored
+  CT 101 started
+
+  [ FAILURE ]
+  ERROR: CT 101 already exists - use --force to overwrite
+  ERROR: storage 'local-lvm' is not available
+  tar: Error is not recoverable: exiting now   (corrupt archive)
+
+
+--------------------------------------------------------------------------------
+4. RESTORE — MIGRATE TO ANOTHER PROXMOX SERVER
+--------------------------------------------------------------------------------
+Use this branch to move a container backup to a different Proxmox host.
+Requires the backup file to be accessible on the target server (via copy or
+shared storage).
+
+NOTE: Both servers must run compatible Proxmox VE versions. VMID need not match
+      between servers. Network IP/firewall rules may need updating after migration.
+
+
+4.1  GUI — Cross-Server Restore
+--------------------------------
+1. Copy the .tar.zst backup file to the destination server
+   (SCP, or via shared NFS/CIFS storage)
+2. On the destination server: node → local → Backups
+   (or whichever storage holds the file)
+3. If file isn't listed, click Rescan — detects files already in dump/
+4. Select the backup and click Restore (same dialog as same-server restore)
+5. Assign a CT ID valid on the new server (check existing IDs first)
+6. Set Storage, review network config, click Restore
+   (Update IP/hostname inside the container after if needed)
+
+TIP: If both servers share an NFS/CIFS backup store, add it to both nodes under
+     Datacenter → Storage. The backup will appear on both without manual copying.
+
+
+4.2  CLI — Cross-Server Restore
+---------------------------------
+Step 1 — Copy backup file to destination server:
+  scp /var/lib/vz/dump/vzdump-lxc-101-2025_05_01-02_00_00.tar.zst \
+    root@pve2:/var/lib/vz/dump/
+
+Step 2 — On destination server, restore from file:
+  pct restore 101 /var/lib/vz/dump/vzdump-lxc-101-2025_05_01-02_00_00.tar.zst \
+    --storage local-lvm
+  pct start 101
+
+Optional — Update hostname and verify network after restore:
+  pct set 101 --hostname new-hostname
+  pct exec 101 -- ip addr       # verify network config inside container
+
+Full migration workflow:
+  Step  Command / Action                                        Notes
+  ----  ------------------------------------------------------  -----------------------
+  1     vzdump 101 --storage local --compress zstd             Creates backup on source
+  2     scp <archive> root@pve2:/var/lib/vz/dump/              Transfer to dest node
+  3     pct restore 101 <archive> --storage local-lvm          Run on destination node
+  4     pct start 101                                           Verify container boots
+  5     Update DNS / firewall rules as needed                   If IP or subnet changed
+  6     (Optional) pct destroy 101 on source node              After confirming success
+
+  [ SUCCESS ]
+  vzdump-lxc-101-2025_05_01-02_00_00.tar.zst   100%  1.2GB  45.2MB/s  00:27
+  restore CT 101: successfully restored
+  CT 101 started
+
+  [ FAILURE ]
+  ssh: connect to host pve2 port 22: Connection refused    (check SSH / firewall)
+  ERROR: 'pve2' does not support container migration       (version mismatch)
+  ERROR: CT 101 already exists on pve2 - use --force       (VMID conflict on dest)
+  ERROR: storage 'local-lvm' is full                       (free space first)
+
+
+--------------------------------------------------------------------------------
+5. POST-RESTORE VERIFICATION
+--------------------------------------------------------------------------------
+Always verify a restored container before decommissioning the source.
+
+  pct status 101                              # should show 'running'
+  pct exec 101 -- systemctl is-system-running # 'running' or 'degraded'
+  pct exec 101 -- df -h                       # check disk mounts
+  pct exec 101 -- ping -c 2 8.8.8.8          # network connectivity
+
+
+--------------------------------------------------------------------------------
+6. QUICK REFERENCE
+--------------------------------------------------------------------------------
+  Task                      Command / Location
+  ------------------------  ---------------------------------------------------
+  List backup files         ls /var/lib/vz/dump/
+                              or  pvesm list <storage>
+  Backup (CLI)              vzdump <vmid> --storage <storage> --compress zstd
+  Restore same server       pct restore <vmid> <archive> --storage <storage> --force
+  Restore to new VMID       pct restore <newvmid> <archive> --storage <storage>
+  Copy backup off-server    scp /var/lib/vz/dump/<archive> root@<host>:/var/lib/vz/dump/
+  List containers           pct list
+  Start / stop container    pct start <vmid>   /   pct stop <vmid>
+  Container config file     /etc/pve/lxc/<vmid>.conf
+  GUI Backup                Select CT → Backup tab → Backup Now
+  GUI Scheduled Backup      Datacenter → Backup → Add
+  GUI Restore               Select CT → Backup tab → Restore
+
+================================================================================

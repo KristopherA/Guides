@@ -1,0 +1,313 @@
+MALWARE LAB INTEGRATION: DELETED FILE RECOVERY DURING DETONATION
+=================================================================
+
+Purpose:
+Integrate Linux deleted-file recovery into a malware analysis lab so logs, PCAPs, artifacts, and process outputs can be recovered if deleted during sample execution.
+
+Use case:
+A malware sample, test script, analyst mistake, or cleanup job deletes a log/artifact while a collection process is still writing to it.
+
+------------------------------------------------------------
+1. WHERE THIS FITS IN THE MALWARE HUNTING WORKFLOW
+------------------------------------------------------------
+
+Recommended placement:
+
+[Sample Ingestion]
+        |
+        v
+[Container Detonation]
+        |
+        v
+[Live Monitoring]
+        |
+        +--> process logging
+        +--> filesystem logging
+        +--> network capture
+        +--> deleted-file watcher
+        |
+        v
+[Artifact Collection]
+        |
+        v
+[IOC Extraction]
+        |
+        v
+[YARA / Sigma / Detection Engineering]
+
+The deleted-file recovery logic belongs in the live monitoring phase.
+
+------------------------------------------------------------
+2. WHY THIS MATTERS IN MALWARE ANALYSIS
+------------------------------------------------------------
+
+Malware or tooling may delete evidence such as:
+
+- dropped payloads
+- temporary unpacked files
+- execution logs
+- shell history
+- command output files
+- decoded configs
+- PCAP files
+- sandbox agent output
+- staging files under /tmp
+- files deleted immediately after execution
+
+If a process still has the deleted file open, recovery may be possible through:
+
+/proc/<PID>/fd/<FD>
+
+------------------------------------------------------------
+3. SAFE LAB ASSUMPTIONS
+------------------------------------------------------------
+
+Use this only inside an isolated malware lab.
+
+Minimum controls:
+
+- container or VM isolation
+- non-root container user where possible
+- no direct home/office IP exposure
+- controlled egress or no egress
+- disposable snapshots
+- separate storage for recovered artifacts
+- no shared host-sensitive mounts
+
+Do not run unknown malware directly on your workstation.
+
+------------------------------------------------------------
+4. DIRECTORY LAYOUT
+------------------------------------------------------------
+
+Recommended lab folders:
+
+/analysis
+/analysis/samples
+/analysis/runtime
+/analysis/logs
+/analysis/pcap
+/analysis/recovered_deleted
+/analysis/reports
+/analysis/yara
+
+Create them:
+
+mkdir -p /analysis/samples
+mkdir -p /analysis/runtime
+mkdir -p /analysis/logs
+mkdir -p /analysis/pcap
+mkdir -p /analysis/recovered_deleted
+mkdir -p /analysis/reports
+mkdir -p /analysis/yara
+
+------------------------------------------------------------
+5. DELETED FILE WATCHER SCRIPT
+------------------------------------------------------------
+
+Save as:
+
+/analysis/runtime/watch_deleted_files.sh
+
+Script:
+
+#!/usr/bin/env bash
+set -u
+
+OUT_DIR="${1:-/analysis/recovered_deleted}"
+INTERVAL="${2:-5}"
+LOG_FILE="/analysis/logs/deleted_file_recovery.log"
+
+mkdir -p "$OUT_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
+
+echo "Starting deleted-file watcher" | tee -a "$LOG_FILE"
+echo "Output directory: $OUT_DIR" | tee -a "$LOG_FILE"
+echo "Interval seconds: $INTERVAL" | tee -a "$LOG_FILE"
+
+while true; do
+  sudo lsof +L1 2>/dev/null | awk 'NR>1' | while read -r line; do
+    pid=$(echo "$line" | awk '{print $2}')
+    fd=$(echo "$line" | awk '{print $4}' | tr -d 'rwu')
+    size=$(echo "$line" | awk '{print $7}')
+    name=$(echo "$line" | awk '{$1=$2=$3=$4=$5=$6=$7=$8=""; print $0}' | sed 's/^ *//')
+
+    if [[ -z "$pid" || -z "$fd" ]]; then
+      continue
+    fi
+
+    src="/proc/$pid/fd/$fd"
+    safe_name=$(echo "$name" | tr '/ ():' '_____')
+    out="$OUT_DIR/recovered_pid-${pid}_fd-${fd}_size-${size}_${safe_name}"
+
+    if [[ -e "$src" && ! -e "$out" ]]; then
+      echo "[$(date -Is)] Recovering PID=$pid FD=$fd SIZE=$size NAME=$name" | tee -a "$LOG_FILE"
+      sudo cp "$src" "$out" 2>>"$LOG_FILE" && sudo chmod 0644 "$out"
+    fi
+  done
+
+  sleep "$INTERVAL"
+done
+
+Make executable:
+
+chmod +x /analysis/runtime/watch_deleted_files.sh
+
+Run during detonation:
+
+/analysis/runtime/watch_deleted_files.sh /analysis/recovered_deleted 3
+
+------------------------------------------------------------
+6. DETONATION RUNBOOK WITH RECOVERY
+------------------------------------------------------------
+
+Before execution:
+
+mkdir -p /analysis/recovered_deleted /analysis/logs /analysis/pcap
+sudo lsof +L1 > /analysis/logs/baseline_deleted_open_files.txt
+
+Start watchers in separate terminals or background jobs:
+
+/analysis/runtime/watch_deleted_files.sh /analysis/recovered_deleted 3 > /analysis/logs/deleted_watcher.stdout 2>&1 &
+echo $! > /analysis/runtime/deleted_watcher.pid
+
+Optional network capture:
+
+sudo tcpdump -i any -w /analysis/pcap/detonation.pcap &
+echo $! > /analysis/runtime/tcpdump.pid
+
+Execute sample inside the isolated environment:
+
+# Example placeholder only. Replace with your lab-specific execution method.
+# Do not execute malware outside the lab.
+
+./run_sample_inside_lab.sh /analysis/samples/sample.bin
+
+After execution:
+
+sudo lsof +L1 > /analysis/logs/final_deleted_open_files.txt
+ls -lah /analysis/recovered_deleted > /analysis/logs/recovered_deleted_inventory.txt
+
+Stop watchers:
+
+kill "$(cat /analysis/runtime/deleted_watcher.pid)" 2>/dev/null
+kill "$(cat /analysis/runtime/tcpdump.pid)" 2>/dev/null
+
+------------------------------------------------------------
+7. POST-RUN TRIAGE
+------------------------------------------------------------
+
+Inventory recovered files:
+
+find /analysis/recovered_deleted -type f -exec ls -lh {} \;
+
+Hash recovered files:
+
+find /analysis/recovered_deleted -type f -exec sha256sum {} \; > /analysis/reports/recovered_deleted_sha256.txt
+
+Identify file types:
+
+find /analysis/recovered_deleted -type f -exec file {} \; > /analysis/reports/recovered_deleted_filetypes.txt
+
+Search for indicators:
+
+grep -RInaE "http|https|\.onion|powershell|cmd.exe|/bin/sh|base64|token|password|key|C2|User-Agent" /analysis/recovered_deleted > /analysis/reports/recovered_deleted_ioc_grep.txt
+
+Extract strings:
+
+mkdir -p /analysis/reports/strings
+find /analysis/recovered_deleted -type f | while read -r f; do
+  b=$(basename "$f")
+  strings -a "$f" > "/analysis/reports/strings/$b.strings.txt"
+done
+
+------------------------------------------------------------
+8. DETECTION ENGINEERING HANDOFF
+------------------------------------------------------------
+
+Recovered deleted files may be useful for:
+
+- IOC extraction
+- malware config recovery
+- YARA rule generation
+- Sigma rule context
+- timeline reconstruction
+- C2/domain discovery
+- dropped-file analysis
+
+Suggested handoff bundle:
+
+/analysis/recovered_deleted
+/analysis/reports/recovered_deleted_sha256.txt
+/analysis/reports/recovered_deleted_filetypes.txt
+/analysis/reports/recovered_deleted_ioc_grep.txt
+/analysis/logs/deleted_file_recovery.log
+/analysis/pcap/detonation.pcap
+
+------------------------------------------------------------
+9. YARA GENERATION PATH
+------------------------------------------------------------
+
+If yarGen is available:
+
+python3 yarGen.py -m /analysis/recovered_deleted -o /analysis/yara/recovered_deleted.yar
+
+Then validate against clean files:
+
+yara /analysis/yara/recovered_deleted.yar /path/to/known-clean-corpus
+
+And validate against related samples:
+
+yara /analysis/yara/recovered_deleted.yar /analysis/samples
+
+------------------------------------------------------------
+10. LIMITATIONS
+------------------------------------------------------------
+
+This only works when deleted files are still open by a process.
+
+It does not recover:
+
+- files deleted and closed before the watcher runs
+- files securely wiped with shred-like behavior
+- data overwritten after descriptor closure
+- files never written to disk
+- memory-only payloads
+
+The watcher creates snapshots. If the process keeps writing after snapshot recovery, run the watcher repeatedly or manually copy again from the live descriptor.
+
+------------------------------------------------------------
+11. OPSEC NOTES
+------------------------------------------------------------
+
+Do not allow malware to reach the internet from your home or corporate IP.
+Use controlled routing, sinkholes, fake services, or isolated networks.
+
+Do not mount sensitive host paths into the container.
+Do not run the detonation container as root unless the lab design requires it and the risk is accepted.
+Do not keep recovered malware artifacts on shared workstations.
+
+------------------------------------------------------------
+12. QUICK COMMAND SUMMARY
+------------------------------------------------------------
+
+Find recoverable deleted files:
+
+sudo lsof +L1
+
+Recover manually:
+
+sudo cp /proc/<PID>/fd/<FD> /analysis/recovered_deleted/file.recovered
+
+Start watcher:
+
+/analysis/runtime/watch_deleted_files.sh /analysis/recovered_deleted 3
+
+Hash recovered artifacts:
+
+find /analysis/recovered_deleted -type f -exec sha256sum {} \;
+
+Filetype recovered artifacts:
+
+find /analysis/recovered_deleted -type f -exec file {} \;
+

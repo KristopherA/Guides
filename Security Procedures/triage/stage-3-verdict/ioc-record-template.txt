@@ -1,0 +1,195 @@
+TRIAGE RECORD - URL / DOCUMENT
+Copy this file into the case folder and fill it in. Fill it in for benign
+verdicts too. Defang every URL, domain, and IP: hxxps://bad[.]example[.]com
+
+===========================================================================
+CASE
+===========================================================================
+Case ID:
+Date / time (UTC):
+Analyst:
+Case folder:
+Reported by:
+Reported how:       [ ] report button  [ ] forwarded  [ ] user asked directly
+                    [ ] alert  [ ] proactive hunt  [ ] other:
+
+===========================================================================
+ARTEFACT
+===========================================================================
+What arrived:       [ ] email  [ ] bare URL  [ ] file  [ ] other:
+
+If email:
+  From (display):
+  From (address):
+  Return-Path:
+  Reply-To:
+  Message-ID:
+  Subject:
+  Date sent:
+  Recipients:                                    (count:        )
+  Originating IP:                                (rDNS:                    )
+  Hosting / ASN:
+  Abuse contact:
+
+  SPF:    [ ] pass [ ] fail [ ] softfail [ ] none [ ] error
+  DKIM:   [ ] pass [ ] fail [ ] none     [ ] error
+  DMARC:  [ ] pass [ ] fail [ ] none     policy: [ ] none [ ] quarantine [ ] reject
+
+  .eml SHA-256:
+
+===========================================================================
+URLS (one block per URL in the chain, including every redirect hop)
+===========================================================================
+URL (defanged):
+  Hop position:     [ ] as sent  [ ] redirect  [ ] found in document  [ ] QR code
+  Final destination:
+  Hostname:
+  Resolved IP(s):
+  Domain created:                                (age in days:        )
+  Registrar:
+  TLS issuer:                                    (cert dates:              )
+  Content-Type:
+  VirusTotal:                                    urlscan.io:
+  CT-log siblings:
+  Page shape:       [ ] credential form  [ ] download  [ ] redirect only
+                    [ ] benign content  [ ] dead / 404  [ ] login wall
+  Verdict:          [ ] benign  [ ] suspicious  [ ] malicious
+  Notes:
+
+(repeat as needed)
+
+===========================================================================
+DOCUMENTS (one block per file)
+===========================================================================
+Filename:
+  Real type (file):                              Claimed ext:
+  Size:
+  SHA-256:
+  MD5:
+  Source:           [ ] email attachment  [ ] downloaded from URL  [ ] other
+  Where-from xattr:
+  VirusTotal:                                    ClamAV:
+  Macros:           [ ] none  [ ] present, no autorun  [ ] autorun present
+    Auto-run triggers found:
+    Suspicious keywords:
+  P-code stomping:  [ ] not checked  [ ] no  [ ] yes
+  XLM / Excel 4:    [ ] n/a  [ ] none  [ ] present
+  DDE / DDEAUTO:    [ ] no  [ ] yes
+  External rels:    [ ] no  [ ] yes - targets:
+  Remote template:  [ ] no  [ ] yes - target:
+  Embedded objects:
+  PDF risky tags:
+  RTF objects:
+  URLs inside:
+  Verdict:          [ ] benign  [ ] suspicious  [ ] malicious
+  Notes:
+
+(repeat as needed)
+
+===========================================================================
+SCORE AND VERDICT
+===========================================================================
+Flags raised (from <case>/flags.txt):
+
+Header/sender flags:
+Content/pretext flags:
+Link flags:
+Document flags:
+                          -----------------------------
+Total distinct flags:
+
+Baseline (0-1 benign / 2-3 suspicious / 4+ malicious):
+
+Override applied:   [ ] none
+                    [ ] single decisive flag -> malicious:
+                    [ ] analysis incomplete -> suspicious:
+                    [ ] count discounted as noise:
+
+FINAL VERDICT:      [ ] BENIGN  [ ] SUSPICIOUS  [ ] MALICIOUS
+CONFIDENCE:         [ ] Low  [ ] Medium  [ ] High
+Rationale (one or two sentences):
+
+
+===========================================================================
+USER IMPACT
+===========================================================================
+Link clicked:          [ ] no  [ ] yes  [ ] unknown    by whom:
+Credentials entered:   [ ] no  [ ] yes  [ ] unknown
+MFA approved:          [ ] no  [ ] yes  [ ] unknown
+Document opened:       [ ] no  [ ] yes  [ ] unknown    on host:
+Other recipients affected:
+
+===========================================================================
+CONTAINMENT ACTIONS TAKEN
+===========================================================================
+[ ] Message quarantined / purged tenant-wide       when:
+[ ] Sender address blocked
+[ ] Sender domain blocked
+[ ] Sending IP blocked
+[ ] Reply-To blocked
+[ ] URLs / domains blocked at proxy / DNS          count:
+[ ] CT-log sibling domains blocked
+[ ] File hashes pushed to EDR / AV blocklist
+[ ] Environment searched for other copies          hits:
+[ ] Password reset forced                          user(s):
+[ ] MFA re-registration forced
+[ ] Sign-in logs reviewed (past 72h)               anomalies:
+[ ] Mailbox rules reviewed                         findings:
+[ ] Host triage run                                host:
+[ ] Sample retained in quarantine, not deleted
+
+===========================================================================
+ESCALATION
+===========================================================================
+Escalated:          [ ] no  [ ] yes
+  To:
+  When:
+  Trigger:          [ ] confirmed C2  [ ] lateral movement tooling
+                    [ ] credential harvesting  [ ] opened on production host
+                    [ ] known ransomware / APT tooling  [ ] threat-intel hit
+                    [ ] other:
+Incident ticket #:
+
+===========================================================================
+NOTIFICATIONS
+===========================================================================
+[ ] Reporting user informed
+[ ] Other recipients informed                      count:
+[ ] Abuse contact / hosting provider notified
+[ ] Own-domain DMARC owner notified (if p=none)
+
+===========================================================================
+FEED FORWARD
+===========================================================================
+[ ] Indicators handed to detection engineering     (modules/detection-engineering.txt)
+      hashes:
+      domains:
+      IPs:
+[ ] Detection rule created                         rule ID:
+[ ] Rule validated as firing                       (modules/detection-validation.md)
+[ ] Sample sent to detonation lab                  (modules/detonation-lab/)
+[ ] Awareness example created from this case
+
+===========================================================================
+MITRE ATT&CK
+===========================================================================
+Tick what this case actually demonstrated.
+[ ] T1566.001  Phishing: spearphishing attachment
+[ ] T1566.002  Phishing: spearphishing link
+[ ] T1204.001  User execution: malicious link
+[ ] T1204.002  User execution: malicious file
+[ ] T1059      Command and scripting interpreter
+[ ] T1027      Obfuscated files or information
+[ ] T1036      Masquerading
+[ ] T1071.001  Application layer protocol: web protocols
+[ ] T1105      Ingress tool transfer
+[ ] T1221      Template injection
+[ ] T1114      Email collection
+[ ] T1539      Steal web session cookie
+[ ] T1543.001  Create or modify system process: macOS LaunchAgent/Daemon
+[ ] T1547.001  Boot or logon autostart execution
+[ ] other:
+
+===========================================================================
+Time spent:
+Closed (UTC):

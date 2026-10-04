@@ -1,0 +1,26 @@
+Place and Establish a Conference Call
+
+You call them procedure:
+
+To create a three-party conference call:
+ 
+During a call, press the more soft key and then the Confrn soft key to open a new line and put the first party on hold.
+ 
+Place a call to another number.
+ 
+When the call connects, press Confrn again to add the new party to the call.
+
+
+
+
+
+
+They call you Procedure:
+
+To establish a conference call between two- and three-party calls, one active and the other on hold:• Press the Confrn soft key on the Cisco Unified IP phone.
+
+To establish a conference call between second- and third-party calls already present on a Cisco Unified IP phone, using separateline buttons, one active and the other on hold:
+ 
+Press the Confrn soft key on the Cisco Unified IP phone.
+ 
+Press the Line button of the call you want to add to the conference.

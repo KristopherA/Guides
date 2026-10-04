@@ -1,0 +1,211 @@
+Docker Compose Malware Lab Skeleton
+===================================
+
+Purpose
+-------
+This is a safe skeleton for building a malware-analysis lab layout. It is not a
+complete detonation platform by itself. Treat it as a starting point.
+
+Critical warning
+----------------
+Do not run live malware on your personal workstation. Use a disposable remote lab
+or cyber range whenever possible. Do not allow uncontrolled outbound internet
+from malware execution containers. Do not run containers as root.
+
+Directory structure
+-------------------
+
+malware-lab/
+  docker-compose.yml
+  .env
+  samples/
+  artifacts/
+  reports/
+  rules/
+  scripts/
+  sandbox/
+    Dockerfile
+    entrypoint.sh
+  sensor/
+    Dockerfile
+    entrypoint.sh
+
+Create directories
+------------------
+
+mkdir -p malware-lab/{samples,artifacts,reports,rules,scripts,sandbox,sensor}
+cd malware-lab
+
+.env
+----
+
+cat > .env <<'EOF_ENV'
+LAB_UID=1000
+LAB_GID=1000
+ANALYSIS_TIMEOUT_SECONDS=120
+EOF_ENV
+
+docker-compose.yml
+------------------
+
+cat > docker-compose.yml <<'EOF_COMPOSE'
+services:
+  sandbox:
+    build:
+      context: ./sandbox
+    container_name: malware_sandbox
+    user: "${LAB_UID}:${LAB_GID}"
+    read_only: false
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1024m
+    cpus: "1.0"
+    networks:
+      - detonation_net
+    volumes:
+      - ./samples:/lab/samples:ro
+      - ./artifacts:/lab/artifacts:rw
+    environment:
+      ANALYSIS_TIMEOUT_SECONDS: "${ANALYSIS_TIMEOUT_SECONDS}"
+    command: ["/lab/entrypoint.sh"]
+
+  sensor:
+    build:
+      context: ./sensor
+    container_name: malware_sensor
+    user: "0:0"
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - detonation_net
+    volumes:
+      - ./artifacts:/lab/artifacts:rw
+    command: ["/lab/entrypoint.sh"]
+
+networks:
+  detonation_net:
+    driver: bridge
+    internal: true
+EOF_COMPOSE
+
+sandbox/Dockerfile
+------------------
+
+cat > sandbox/Dockerfile <<'EOF_DOCKERFILE'
+FROM debian:stable-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file \
+    strace \
+    procps \
+    psmisc \
+    lsof \
+    coreutils \
+    findutils \
+    python3 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 1000 analyst && useradd -m -u 1000 -g 1000 analyst
+
+WORKDIR /lab
+COPY entrypoint.sh /lab/entrypoint.sh
+RUN chmod 755 /lab/entrypoint.sh
+
+USER analyst
+EOF_DOCKERFILE
+
+sandbox/entrypoint.sh
+---------------------
+
+cat > sandbox/entrypoint.sh <<'EOF_ENTRYPOINT'
+#!/bin/sh
+set -eu
+
+ARTIFACT_DIR="/lab/artifacts/sandbox_$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$ARTIFACT_DIR"
+
+id > "$ARTIFACT_DIR/user_identity.txt"
+uname -a > "$ARTIFACT_DIR/uname.txt"
+ps aux > "$ARTIFACT_DIR/processes_initial.txt"
+find /lab/samples -maxdepth 2 -type f -exec sha256sum {} \; > "$ARTIFACT_DIR/sample_hashes.txt" || true
+find /lab/samples -maxdepth 2 -type f -exec file {} \; > "$ARTIFACT_DIR/sample_file_types.txt" || true
+
+cat > "$ARTIFACT_DIR/README.txt" <<'EOF_README'
+Sandbox initialized.
+
+This skeleton does not automatically execute malware.
+Place controlled execution logic here only inside an approved remote lab.
+Keep the container non-root.
+Keep network egress controlled.
+EOF_README
+
+sleep "${ANALYSIS_TIMEOUT_SECONDS:-120}"
+ps aux > "$ARTIFACT_DIR/processes_final.txt"
+EOF_ENTRYPOINT
+
+sensor/Dockerfile
+-----------------
+
+cat > sensor/Dockerfile <<'EOF_SENSOR_DOCKERFILE'
+FROM debian:stable-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tcpdump \
+    iproute2 \
+    coreutils \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /lab
+COPY entrypoint.sh /lab/entrypoint.sh
+RUN chmod 755 /lab/entrypoint.sh
+EOF_SENSOR_DOCKERFILE
+
+sensor/entrypoint.sh
+--------------------
+
+cat > sensor/entrypoint.sh <<'EOF_SENSOR_ENTRYPOINT'
+#!/bin/sh
+set -eu
+
+ARTIFACT_DIR="/lab/artifacts/sensor_$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$ARTIFACT_DIR"
+
+ip addr > "$ARTIFACT_DIR/ip_addr.txt" || true
+ip route > "$ARTIFACT_DIR/ip_route.txt" || true
+
+timeout "${ANALYSIS_TIMEOUT_SECONDS:-120}" tcpdump -i any -w "$ARTIFACT_DIR/capture.pcap" || true
+EOF_SENSOR_ENTRYPOINT
+
+Build and run
+-------------
+
+docker compose build
+docker compose up
+
+Stop and clean
+--------------
+
+docker compose down --remove-orphans
+
+Operational notes
+-----------------
+
+1. This compose file uses an internal Docker network.
+2. Internal network means no direct outbound internet by default.
+3. The sandbox container runs as a non-root user.
+4. The sensor container needs packet capture capability, so it has specific
+   network capabilities. Keep it separate from execution.
+5. Do not mount the Docker socket into any malware-analysis container.
+6. Do not mount broad host paths.
+7. Keep samples mounted read-only.
+8. Store outputs in artifacts/.
+9. Rebuild or destroy containers after every run.
+

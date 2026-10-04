@@ -1,0 +1,367 @@
+===============================================================
+AI TOOLS EFFICIENCY GUIDE
+Getting the best results from LLM-based tools
+Scope: chat assistants, API usage, coding agents
+Generated: 2026-07-04
+===============================================================
+
+
+PROMPTING FUNDAMENTALS
+
+RULE
+  Be specific about the task, format, and audience.
+
+WHY
+  Vague prompts force the model to guess. Every guess is a
+  chance to guess wrong. Specificity narrows the output space.
+
+EXAMPLE
+  Weak:   "explain docker networking"
+  Strong: "explain docker bridge vs host networking for a
+           sysadmin migrating services to LXC; 300 words max"
+
+---
+
+RULE
+  State the output format explicitly.
+
+WHY
+  Models default to verbose markdown with headers and bullets.
+  If you want plain text, a table, JSON, or a script with no
+  commentary, say so.
+
+EXAMPLE
+  "Output a bash script only, no explanation, no markdown fences."
+
+---
+
+RULE
+  Give context the model cannot know.
+
+WHY
+  The model does not know your environment, versions, or
+  constraints unless told. Version numbers matter enormously
+  for technical answers.
+
+EXAMPLE
+  Weak:   "why won't mysql start in docker"
+  Strong: "mysql 8.4.6 official image on Ubuntu 22.04 host,
+           exits with code 1, log shows: <paste actual log>"
+
+---
+
+RULE
+  Show, don't describe. Paste real errors, logs, and code.
+
+WHY
+  A pasted error message contains details you would never think
+  to mention (paths, versions, exact syntax). Paraphrasing
+  strips the diagnostic signal.
+
+EXAMPLE
+  Paste the full traceback, not "it throws a permission error".
+
+---
+
+RULE
+  Use examples to define the pattern you want (few-shot).
+
+WHY
+  One or two input/output examples communicate format and style
+  better than paragraphs of description.
+
+EXAMPLE
+  "Convert hostnames like this: ops-graylog.example.com -> GRAYLOG.
+   Now convert: ops-wiki.example.com, sign.example.com"
+
+---
+
+RULE
+  Break large tasks into steps; iterate instead of restarting.
+
+WHY
+  One giant prompt asking for a complete system produces shallow
+  results. Sequential prompts (design -> implement -> review ->
+  harden) each get full attention.
+
+EXAMPLE
+  1. "Design the backup strategy, don't write code yet."
+  2. "Now write the script for step 2 of your design."
+  3. "Review the script for failure modes and fix them."
+
+---
+
+RULE
+  Ask the model to reason before answering on hard problems.
+
+WHY
+  Forcing intermediate reasoning ("think through the failure
+  scenarios first, then give your recommendation") measurably
+  improves accuracy on multi-step logic. Many tools expose this
+  as an "extended thinking" toggle -- turn it on for hard tasks,
+  off for simple ones (faster, cheaper).
+
+EXAMPLE
+  "Before answering, list what could cause this symptom, rule
+   each out against the log, then conclude."
+
+---
+
+RULE
+  Assign a role or perspective when it changes the answer.
+
+WHY
+  "Explain TLS" for a junior tech vs a security auditor should
+  produce different documents. Role framing sets depth, tone,
+  and assumed knowledge.
+
+EXAMPLE
+  "Act as a security reviewer. Audit this Caddyfile for
+   misconfigurations, worst first."
+
+---
+
+RULE
+  Tell the model what to do, not only what to avoid.
+
+WHY
+  Negative-only instructions ("don't be verbose") are weaker
+  than positive targets ("answer in under 100 words").
+
+EXAMPLE
+  Weak:   "don't use markdown"
+  Strong: "output plain text, 2-space indents, ALL-CAPS headers"
+
+---
+
+RULE
+  Ask for uncertainty and sources when facts matter.
+
+WHY
+  Models state guesses with the same confidence as facts.
+  Explicitly inviting "I don't know" reduces hallucination.
+
+EXAMPLE
+  "If you're not certain a flag exists in mysql 8.4, say so
+   rather than guessing. Cite the config variable name exactly."
+
+
+===============================================================
+MODEL SELECTION
+===============================================================
+
+RULE
+  Match model tier to task difficulty, not habit.
+
+WHY
+  Every vendor ships a tier ladder: small/fast (Haiku, GPT mini,
+  Gemini Flash), mid (Sonnet), large/frontier (Opus and above).
+  Frontier models on trivial tasks waste time and money; small
+  models on hard reasoning produce confident garbage.
+
+GUIDE
+  Small/fast:  classification, extraction, reformatting,
+               simple Q&A, bulk operations, log triage
+  Mid-tier:    everyday coding, drafting, summarization,
+               most sysadmin Q&A -- the default choice
+  Frontier:    architecture decisions, multi-step debugging,
+               security analysis, long-document reasoning,
+               anything where a wrong answer is expensive
+
+---
+
+RULE
+  Use knowledge-cutoff awareness and web search.
+
+WHY
+  Every model has a training cutoff. Questions about recent
+  releases, CVEs, or pricing need a search-enabled tool or a
+  pasted doc, not model memory.
+
+EXAMPLE
+  For "latest Proxmox 9 changes", enable web search or paste
+  the release notes rather than trusting recall.
+
+---
+
+RULE
+  For API work, pin model versions and test before switching.
+
+WHY
+  Model aliases (e.g. "latest") change under you. Pinned version
+  strings keep behavior stable; new versions can change output
+  format and break parsing.
+
+EXAMPLE
+  Use 'claude-sonnet-4-6' style pinned IDs in scripts; verify
+  current names at https://docs.claude.com
+
+---
+
+RULE
+  Consider context window and cost per token as real limits.
+
+WHY
+  Pasting a 50k-line log into every message burns context and
+  money. Pre-filter with grep/awk first, then send the relevant
+  slice.
+
+EXAMPLE
+  grep -i error app.log | tail -100   # send this, not the file
+
+
+===============================================================
+CONTEXT MANAGEMENT
+===============================================================
+
+RULE
+  Front-load stable context; keep conversations on one topic.
+
+WHY
+  Long conversations that drift across topics degrade quality --
+  old irrelevant content competes with your current question.
+  Start fresh chats for new topics; carry over only a short
+  summary.
+
+EXAMPLE
+  "New chat. Context summary: Docker host migrating to LXC on
+   Proxmox 8, services grouped by function. Question: ..."
+
+---
+
+RULE
+  Use project/custom-instruction features for repeated context.
+
+WHY
+  Anything you retype every session (environment, preferences,
+  output format) belongs in persistent instructions, project
+  knowledge, or a system prompt -- write once, apply always.
+
+EXAMPLE
+  Project instruction: "All hosts are Ubuntu 22.04. Output
+  scripts with set -euo pipefail. Plain text only."
+
+---
+
+RULE
+  Paste authoritative docs when precision matters.
+
+WHY
+  Grounding the model in supplied text ("answer only from this
+  man page / RFC / vendor doc") beats memory for exact flags,
+  defaults, and version-specific behavior.
+
+EXAMPLE
+  "Using only the attached mysql 8.4 reference section, tell me
+   the default for require_secure_transport."
+
+
+===============================================================
+VERIFICATION AND SAFETY
+===============================================================
+
+RULE
+  Treat output as a draft from a fast junior colleague.
+
+WHY
+  Models produce plausible-looking commands that can be subtly
+  wrong: deprecated flags, wrong package names, invented config
+  keys. Confidence is not correlated with correctness.
+
+CHECK
+  - Run generated commands on a test box or with --dry-run first
+  - Verify package/flag existence: man <cmd>, apt show <pkg>
+  - Diff generated configs against known-good ones
+  - Never paste secrets, keys, or prod credentials into prompts
+
+---
+
+RULE
+  Use the model to check the model.
+
+WHY
+  A second pass with an adversarial framing catches errors the
+  first pass missed -- cheap and effective.
+
+EXAMPLE
+  "Review the script you just wrote as a hostile code reviewer.
+   What breaks it? What did you assume that might be false?"
+
+---
+
+RULE
+  Close the loop: feed results back.
+
+WHY
+  "That failed with error X" plus the actual output lets the
+  model correct itself. Silent retries with rephrased prompts
+  waste turns.
+
+
+===============================================================
+WORKFLOW MULTIPLIERS
+===============================================================
+
+RULE
+  Build reusable prompt templates for recurring tasks.
+
+WHY
+  A tested prompt is a tool. Keep a prompts.txt like a cheat
+  sheet: incident summary template, code review template,
+  changelog template.
+
+EXAMPLE
+  "TEMPLATE: Summarize this log excerpt: 1) timeline, 2) root
+   cause hypothesis, 3) commands to confirm, 4) remediation."
+
+---
+
+RULE
+  Use agentic/coding tools (e.g. Claude Code) for multi-file work.
+
+WHY
+  Chat is fine for snippets; agent tools that can read your repo,
+  run tests, and edit files remove the copy-paste loop entirely
+  for real codebases.
+
+---
+
+RULE
+  Batch similar small tasks into one prompt.
+
+WHY
+  "Do X for these 12 hosts" in one shot with a clear per-item
+  format beats 12 separate prompts.
+
+EXAMPLE
+  "For each hostname below, output: hostname, suggested LXC ID,
+   resource group. One line each, pipe-delimited."
+
+---
+
+RULE
+  Ask for the question you should have asked.
+
+WHY
+  The model often knows a better framing of your problem.
+
+EXAMPLE
+  "Before answering, tell me if there's a better way to approach
+   this problem than what I asked for."
+
+
+===============================================================
+QUICK CHECKLIST BEFORE SENDING A PROMPT
+===============================================================
+
+  [ ] Task stated in one clear sentence
+  [ ] Versions/environment included
+  [ ] Real errors/logs pasted, not paraphrased
+  [ ] Output format specified
+  [ ] Length/depth constraint given
+  [ ] Right model tier for the difficulty
+  [ ] No secrets in the prompt
+  [ ] Plan to verify the output
+
+
+Generated by Claude | For internal/reference use only

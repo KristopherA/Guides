@@ -1,0 +1,255 @@
+MODULE: macOS HOST TRIAGE
+Stand-alone. Reached from: triage/stage-3-verdict/procedure.txt step 7
+Last reviewed: 2026-09-04
+
+WHEN YOU ARE HERE
+-----------------
+A document or link was opened on a real machine, or a host is behaving
+oddly on its own. Triage told you what the artefact was; this module tells
+you what the machine did about it.
+
+Two entry conditions:
+  A. Known artefact, known host - you have a hash, a domain, or a filename
+     from the triage case and you are looking for its traces. Start at
+     phase 3 with what you already know, then sweep phases 1-2.
+  B. Unknown compromise - something is wrong and you do not know what.
+     Run phases 1 through 5 in order.
+
+Most commands need sudo. Run them from an admin account on the affected
+machine, or over SSH if the machine is already isolated.
+
+FIRST DECISION: ISOLATE OR OBSERVE
+-----------------------------------
+Isolating stops the damage and destroys the live evidence. Observing keeps
+the evidence and lets the damage continue. Choose deliberately:
+
+  Isolate now if      credentials may have been taken, ransomware behaviour
+                      is suspected, or the host touches sensitive data.
+  Observe briefly if  you need the C2 destination for detection engineering
+                      and the host is low-value. Cap it at minutes, with
+                      Little Snitch or LuLu recording.
+
+Do not reboot. A reboot destroys the process list, the open network
+connections, and anything only in memory - which is most of what phases 1
+and 2 are looking at.
+
+===========================================================================
+PHASE 1 - WHAT IS RUNNING AND WHAT IS IT TALKING TO
+===========================================================================
+
+1. Processes with open network connections - start here, not with ps
+     sudo lsof -i -n -P | grep ESTABLISHED
+     nettop -P
+   Look for: connections to IPs from the triage case, unrecognised IPs,
+   non-standard ports, and processes that have no business on the network.
+
+2. All processes
+     ps aux
+     ps auxww | less
+   Look for: high CPU with no explanation (miners), random or
+   single-character names, names prefixed with a dot (.mdworker), and
+   Apple-sounding names running from the wrong path. com.apple.mdworker_shared
+   making outbound connections to a hosting-provider IP is the shape.
+
+3. The parent of anything suspicious
+     ps -o pid,ppid,user,command -p <PID>
+   An Office application as the parent of bash, zsh, python, curl, or a
+   shell is the single most decisive thing in this phase. It means the
+   document executed.
+
+4. What files a suspicious process has open
+     sudo lsof -p <PID>
+   Look for: config files in odd locations (conx.wol), log files that could
+   be keystroke capture (adobe_logs.log), and anything under /tmp or a
+   hidden directory.
+
+5. Record before you kill anything
+     ps aux > ~/ir-evidence/ps.txt
+     sudo lsof -i -n -P > ~/ir-evidence/lsof-net.txt
+     sudo lsof > ~/ir-evidence/lsof-all.txt
+   You cannot get this back after a reboot.
+
+===========================================================================
+PHASE 2 - PERSISTENCE
+===========================================================================
+Malware that survives a reboot has written itself somewhere. These are the
+places, in the order they are most used on macOS.
+
+1. Launch agents and daemons
+     for dir in ~/Library/LaunchAgents /Library/LaunchAgents \
+                /Library/LaunchDaemons /System/Library/LaunchDaemons; do
+       echo "=== $dir ==="; ls -la "$dir" 2>/dev/null
+     done
+     launchctl list
+
+   Read any plist that looks wrong:
+     plutil -p ~/Library/LaunchAgents/com.suspicious.plist
+   Fields that matter:
+     ProgramArguments   what actually runs
+     RunAtLoad          runs at login
+     StartInterval      runs on a schedule (seconds)
+     WatchPaths         triggers on a file change
+     QueueDirectories   triggers on a directory change
+   A plist with RunAtLoad pointing at a binary that does not exist yet is a
+   dropper waiting for its payload.
+
+2. Background Task Management (macOS 13+)
+   The authoritative list, because it covers mechanisms the directories
+   above do not:
+     sudo sfltool dumpbtm
+   Look for: items masquerading as Apple components that are unsigned, or
+   that run from a hidden or temporary directory.
+
+3. Login items
+     osascript -e 'tell application "System Events" to get the name of every login item'
+
+4. Cron
+     crontab -l
+     sudo crontab -l
+     ls -la /etc/cron* 2>/dev/null
+
+5. Kernel extensions and system extensions
+     kextstat | grep -v com.apple
+     systemextensionsctl list
+
+6. Full sweep with KnockKnock, if installed - it covers more ASEPs than a
+   manual check and reports signing status for each:
+     /Applications/KnockKnock.app/Contents/MacOS/KnockKnock -json | \
+       jq '.[] | select(.signature.status != "Apple") |
+           {name:.name, path:.path, signed:.signature.status}'
+
+7. Watch for new persistence in real time, while you work
+     fswatch ~/Library/LaunchAgents /Library/LaunchAgents /Library/LaunchDaemons | \
+       while read path; do
+         echo "[ALERT] $path"; plutil -p "$path" 2>/dev/null
+       done
+   Or FileMonitor.app filtered on "LaunchAgents".
+
+===========================================================================
+PHASE 3 - VERIFY A SPECIFIC BINARY OR FILE
+===========================================================================
+This is where you start if you arrived with a hash or filename from triage.
+
+1. Code signature and notarisation
+     codesign -dvvv <path> 2>&1
+     spctl --assess --type execute -vv <path>
+   Red flags: unsigned; ad-hoc signed; a Team Identifier that does not match
+   the claimed vendor; and above all CSSMERR_TP_CERT_REVOKED, which means
+   Apple has explicitly revoked that developer certificate - a near-certain
+   malware indicator.
+
+2. Real type and hash
+     file <path>
+     shasum -a 256 <path>
+     md5 -q <path>
+   Compare the hash against the triage case, then look it up:
+     vt file <sha256> --include=last_analysis_stats,reputation,tags
+
+3. Packing and format
+     diec <path>          # Detect It Easy
+   "Packed: UPX" on a macOS binary is immediately suspicious.
+
+4. Strings and linkage
+     strings - <path> | grep -Ei '(https?://|/tmp|passwd|exec|curl|wget|launchctl)'
+     strings - <path> | grep -Eo '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b'
+     otool -L <path>
+     floss <path>          # if plain strings finds nothing
+
+5. Provenance
+     xattr -l <path>
+   com.apple.quarantine tells you it was downloaded and by what.
+   com.apple.metadata:kMDItemWhereFroms gives the source URL - which goes
+   straight back into triage stage 1.
+
+===========================================================================
+PHASE 4 - SYSTEM LOGS
+===========================================================================
+
+1. XProtect - did Apple's own scanner already flag something
+     log show --predicate 'subsystem == "com.apple.xprotect"' --last 7d
+
+2. Camera and microphone access
+     log show --predicate 'subsystem == "com.apple.CMIO"' --last 24h
+
+3. Historical and live
+     log show --last 1h
+     log stream --level info
+
+4. Authentication and remote access
+     last | head -40
+     log show --predicate 'process == "sshd"' --last 7d
+     sudo cat /var/log/system.log 2>/dev/null | grep -i "authentication"
+
+5. Anything referencing the artefact from the triage case
+     log show --last 7d --predicate 'eventMessage CONTAINS "<domain-or-filename>"'
+
+===========================================================================
+PHASE 5 - CONTAIN AND REMEDIATE
+===========================================================================
+
+1. Isolate at the network layer
+     sudo pfctl -e
+   Then write rules permitting only your analysis or management host.
+   Physically pulling the cable and disabling Wi-Fi is faster and less
+   error-prone if you do not need the host reachable.
+
+2. Collect volatile data before rebooting
+     Memory: osxpmem, if you have deeper forensics ahead
+     Or at minimum, the phase 1 command outputs saved to a file
+
+3. Disable, do not delete, while the case is open
+     launchctl bootout gui/$(id -u)/<label>     # user agent
+     sudo launchctl bootout system/<label>      # system daemon
+   Move the plist and the binary to a quarantine folder. Keep them; you may
+   need them for detection engineering, and deleting them destroys evidence.
+
+4. Apple's Malware Removal Tool - minimal feedback, worth running anyway
+     sudo /Library/Apple/System/Library/CoreServices/MRT.app/Contents/MacOS/MRT -a
+
+5. Credentials
+   Assume anything typed or stored on the host is compromised:
+     - reset the user's password from a different machine
+     - force MFA re-registration
+     - review keychain for unexpected entries
+     - review ~/.ssh/authorized_keys for added keys
+     - review browser-stored passwords and session cookies
+     - review mailbox rules for new auto-forward rules
+
+6. Decide whether to reimage
+   Reimage if persistence was confirmed, if a kernel or system extension
+   was involved, or if you cannot account for how the malware arrived.
+   Cleaning a host you do not fully understand leaves you guessing later.
+
+===========================================================================
+FEED IT BACK
+===========================================================================
+  New hashes, domains, IPs        -> detection-engineering.txt
+  A URL from kMDItemWhereFroms    -> triage/stage-1-url/
+  A dropped file                  -> triage/stage-2-document/ or
+                                      detonation-lab/
+  Confirmed persistence path      -> detection-engineering.txt, as a
+                                      detection candidate
+  Everything                      -> the case record in
+                                      triage/stage-3-verdict/
+
+===========================================================================
+LIMITS
+===========================================================================
+- Live-response commands only see what is running now. A dropper that has
+  already run and deleted itself leaves persistence but no process.
+- Everything in phases 1-2 is destroyed by a reboot. Collect first.
+- SIP and TCC will block some reads even under sudo. Full Disk Access for
+  Terminal helps; some paths need recovery mode.
+- macOS memory forensics is materially harder than on Linux or Windows.
+  volatility3 support for recent macOS versions is limited.
+- Nothing here is a substitute for EDR telemetry if you have it. This is the
+  native-tools path for a machine with no agent, or for confirming what an
+  agent reported.
+
+RELATED
+-------
+  Broader scenario coverage (network beaconing, ransomware, compromised
+  accounts, memory forensics, Wi-Fi, hardening):
+    security-scenarios-field-guide.md
+  Deleted-file recovery during live response:
+    file-recovery.txt

@@ -1,0 +1,167 @@
+===============================================================================
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK
+===============================================================================
+
+Purpose
+
+Comprehensive operational reference for deploying, securing,
+troubleshooting, and operating WireGuard in enterprise environments.
+
+Includes architecture, installation, key management, routing, policy
+routing, iptables, nftables, site-to-site VPNs, hub-and-spoke, full
+mesh, IPv6, performance tuning, monitoring, logging, disaster recovery,
+and security.
+
+===============================================================================
+Architecture Patterns
+===============================================================================
+
+Remote access, site-to-site, hub-and-spoke, multi-hub, full mesh,
+customer-isolated interfaces, management VPNs, segmented VLAN access.
+
+===============================================================================
+Installation
+===============================================================================
+
+Ubuntu: apt install wireguard wireguard-tools RHEL: dnf install
+wireguard-tools Verify: wg –version
+
+===============================================================================
+Key Lifecycle
+===============================================================================
+
+One keypair per device, protect private keys, rotate periodically,
+remove stale peers, maintain peer inventory.
+
+===============================================================================
+Server Build
+===============================================================================
+
+Configure ListenPort, Address, PrivateKey, peers, SaveConfig=false,
+enable forwarding, enable service.
+
+===============================================================================
+Client Provisioning
+===============================================================================
+
+Desktop/mobile clients, split tunnel, full tunnel, QR provisioning,
+PersistentKeepalive=25.
+
+===============================================================================
+Routing
+===============================================================================
+
+Avoid overlapping AllowedIPs, advertise only required prefixes, verify
+with ip route.
+
+===============================================================================
+Policy Based Routing
+===============================================================================
+
+Use ip rule and multiple routing tables for multi-WAN and management
+routing.
+
+===============================================================================
+iptables Cookbook
+===============================================================================
+
+Allow UDP/51820, INPUT/FORWARD, MASQUERADE, VLAN restrictions, logging,
+least privilege.
+
+===============================================================================
+nftables Cookbook
+===============================================================================
+
+Modern equivalent of filter/input/forward/NAT rules.
+
+===============================================================================
+Site-to-Site
+===============================================================================
+
+Advertise remote prefixes, verify reverse routing, avoid unnecessary
+NAT.
+
+===============================================================================
+Hub-and-Spoke
+===============================================================================
+
+Central gateway with branch spokes; isolate spokes using firewall rules.
+
+===============================================================================
+Full Mesh
+===============================================================================
+
+Every site peers with every other site; suitable for smaller
+environments.
+
+===============================================================================
+High Availability
+===============================================================================
+
+Keepalived/VRRP, shared configuration management, failover testing.
+
+===============================================================================
+IPv6
+===============================================================================
+
+Dual-stack considerations, forwarding, firewalling, PMTU testing.
+
+===============================================================================
+Performance
+===============================================================================
+
+MTU tuning, MSS clamping, iperf3 testing, CPU/network optimization.
+
+===============================================================================
+Monitoring
+===============================================================================
+
+wg show, journalctl, tcpdump, iptables counters, Prometheus, Graylog.
+
+===============================================================================
+Logging
+===============================================================================
+
+Forward VPN/firewall events to SIEM; retain audit logs.
+
+===============================================================================
+Troubleshooting
+===============================================================================
+
+Check handshake, routing, forwarding, NAT, ACLs, host firewall,
+applications.
+
+===============================================================================
+Disaster Recovery
+===============================================================================
+
+Back up /etc/wireguard, firewall rules, routing config, DNS,
+documentation.
+
+===============================================================================
+Security Hardening
+===============================================================================
+
+Least privilege, rotate keys, split DNS, audit AllowedIPs, disable
+SaveConfig.
+
+===============================================================================
+Operational Runbooks
+===============================================================================
+
+Daily, weekly, monthly operational checks and documentation reviews.
+
+===============================================================================
+APPENDIX - COMMON COMMANDS
+===============================================================================
+
+wg wg show wg showconf wg0 wg-quick up wg0 wg-quick down wg0 systemctl
+status wg-quick@wg0 ip addr ip route ip rule ss -lunp tcpdump -ni any
+udp port 51820 journalctl -u wg-quick@wg0 -f
+
+Ports: 22 SSH 53 DNS 389 LDAP 443 HTTPS 636 LDAPS 3389 RDP 51820
+WireGuard
+
+Checklist: [ ] Backup configs [ ] Audit peers [ ] Verify handshakes [ ]
+Test failover [ ] Review firewall [ ] Review routes [ ] Forward logs to
+SIEM

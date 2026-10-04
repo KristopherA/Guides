@@ -1,0 +1,243 @@
+STAGE 2 - DOCUMENT ANALYSIS
+Part of: URL & Document Triage (see ../../WORKFLOW.txt)
+Companion script: check_document.sh (automates steps 1-9)
+Last reviewed: 2026-09-04
+Platform: macOS primary; the script hashes portably and runs on Linux too.
+
+PURPOSE
+-------
+Decide whether a document is malicious by reading its bytes and structure -
+never by opening it. Covers the four containers that carry the overwhelming
+majority of document-borne attacks:
+
+  OOXML       .docx .xlsx .pptx .docm .xlsm .pptm   zip containers
+  Legacy OLE  .doc  .xls  .ppt                      OLE2 compound files
+  PDF         .pdf
+  RTF         .rtf
+
+Type is detected from the file's bytes. The extension is treated as a claim
+to be verified, not a fact.
+
+RULE #1: Never open the document in Word, Excel, PowerPoint, or Preview to
+"just take a look". Opening it can fire a macro, resolve a remote template,
+or trigger a parser exploit before you see a single pixel.
+
+RUNNING IT
+----------
+  ./check_document.sh /path/to/suspicious.docx
+  CASE_DIR=~/ir-cases/CASE-001 ./check_document.sh suspicious.pdf
+
+Output goes to a timestamped folder holding report.txt, the unpacked
+container, anything extracted, and urls.txt.
+
+SETUP
+-----
+One-time per machine: run ../setup/preflight.sh, which checks every tool
+this stage calls, installs what is missing, and re-verifies. Details and
+per-tool troubleshooting: ../setup/SETUP.txt
+
+If an optional tool is missing the script says so, skips that check, and
+records an incomplete-analysis flag - which means the case cannot be closed
+BENIGN on the strength of a check that never ran. Required for the checks
+that matter most: unzip, ripgrep, oletools, and the Didier Stevens scripts
+(pdfid.py, pdf-parser.py, oledump.py, rtfdump.py - git clone, not pip).
+
+PROCEDURE
+---------
+
+1. Confirm the real file type
+     file /path/to/suspicious.docx
+   A .docx that is not a Zip archive, a .pdf that is not a PDF, or a .doc
+   that is not an OLE2 compound file is a red flag before any other check
+   runs. So is a double extension: invoice.pdf.html, statement.xlsx.lnk.
+
+2. Hash it, and record where it came from
+     shasum -a 256 file.docx     # macOS
+     sha256sum file.docx         # Linux
+     md5 -q file.docx
+   Record the hash whatever the eventual verdict - it is how this case gets
+   correlated with the next one.
+   Then check provenance and metadata:
+     xattr -l file.docx          # macOS: quarantine flag + download source
+     exiftool file.docx
+   In the metadata, look for an unexpected generator application, a
+   modification date earlier than the creation date, generic Author or
+   LastModifiedBy values, and a revision count above 10.
+
+   Keep the original intact. Analyse a copy, in a local non-synced folder -
+   not in iCloud, Dropbox, or a network share, where your copy can propagate.
+     chflags uchg original.docx  # optional macOS immutability flag
+
+3. Check the hash against VirusTotal - hash only
+     vt file <sha256> --include=last_analysis_stats,reputation,tags
+   A 404 means VirusTotal has never seen this hash. That is completely normal
+   for an internal or newly created document and is not a clean bill of
+   health.
+   Do not switch to `vt file scan`. That uploads the document, and the
+   document may be confidential. Uploading a real business file to a public
+   service is a data-loss event even when the file turns out to be harmless.
+
+4. Run a local AV scan
+     clamscan file.docx
+   Signature-based, so no hit is not proof of safety, and stale definitions
+   produce confident false "clean" results. Run `freshclam` before a triage
+   session.
+
+5. Scan for macros - Office containers only
+     olevba --decode file.docx
+   Two things to find, and it is the combination that matters:
+     a. an auto-run trigger: AutoOpen, AutoExec, Auto_Open, Document_Open,
+        Workbook_Open, Document_Close
+     b. an action keyword: Shell, WScript.Shell, CreateObject, powershell,
+        cmd.exe, URLDownloadToFile, XMLHTTP, WinHttp, InternetOpen,
+        MacScript, curl, wget
+   Plus obfuscation as a supporting signal: StrReverse, Chr(), Base64, long
+   string concatenations, Environ.
+
+   Macro presence alone is not a verdict. Legitimate business documents use
+   macros constantly. An auto-run trigger plus a download or shell keyword
+   is the pattern that is not innocent.
+
+   Then check for p-code stomping, where the readable VBA source has been
+   replaced and the compiled p-code is the real payload:
+     pcodedmp -d file.doc
+   Code in pcodedmp that olevba did not show means the source was stomped.
+
+   For Excel, also check XLM / Excel 4.0 macros. They live in sheet formulas
+   rather than in vbaProject.bin, so olevba does not see them at all:
+     xlmdeobfuscator --file file.xlsm
+   Red flags: EXEC(), CALL(), RUN() referencing shell commands; chains of
+   FORMULA() or SET.NAME() building strings; hidden macro sheets.
+
+   Encrypted Office file? Excel's hardcoded default key opens many malicious
+   spreadsheets with no user interaction at all:
+     msoffcrypto-tool encrypted.xlsm decrypted.xlsm -p VelvetSweatshop
+     msoffcrypto-tool encrypted.docm decrypted.docm -p ""
+
+6. Unpack the container and read the structure directly
+   OOXML:
+     unzip -l file.docx            # what is in it
+     unzip -q file.docx -d ./unpacked
+   This shows what the Office application would hide from casual inspection.
+
+7. Find the external references - the most important check in this stage
+   OOXML:
+     rg 'TargetMode="External"' ./unpacked
+     rg 'attachedTemplate' ./unpacked
+     rg 'http://|https://|ftp://|\\\\' ./unpacked
+     rg -i 'DDEAUTO' ./unpacked
+     rg -i 'WEBSERVICE|HYPERLINK\(|externalLink' ./unpacked
+   Each of these is a way for a document with no macros at all to reach off
+   the machine:
+     TargetMode="External"  a hyperlink, remote OLE object, or remote template
+     attachedTemplate       template injection - the payload lives in a .dotm
+                            fetched from a server when the file opens
+     DDEAUTO                Dynamic Data Exchange; executes without any macro
+     WEBSERVICE()           an Excel formula that performs an HTTP request
+     UNC path (\\host\...)  leaks credentials via SMB on open
+
+   Legacy OLE:
+     oledump.py file.xls        # list streams; M = contains VBA
+     oledump.py file.xls -s 3 -v
+     oleobj file.doc            # embedded and linked objects
+     msodde file.doc            # DDE fields
+
+8. Look for embedded objects
+   OOXML:
+     find ./unpacked -path "*embeddings*" -type f
+     file ./unpacked/word/embeddings/*
+   Anything here that is not ordinary Office content - an .exe, .scr, .hta,
+   .lnk, or another archive - is a strong indicator on its own.
+
+   PDF:
+     pdfid.py file.pdf -n
+   Escalate on any non-zero count for:
+     /JavaScript /JS   script the reader runs
+     /OpenAction /AA   runs on open, no click required
+     /Launch           can start a program or open another document
+     /EmbeddedFile     carries another file inside
+     /AcroForm /XFA    forms that can specify JavaScript
+     /URI              external link
+     /ObjStm           object stream, which can hide any of the above
+   A tag can be hex-escaped to dodge this - /J#61vaScript is /JavaScript -
+   so read the structure too:
+     pdf-parser.py file.pdf -a          # add -O for objects inside streams
+     pdf-parser.py file.pdf -o <id> -d  # decode one object's stream
+     pdf-parser.py file.pdf -r <id>     # what references it
+     mutool info file.pdf
+     mutool extract file.pdf            # pull out embedded files
+   Encrypted PDF, often with an empty owner password:
+     qpdf --password="" --decrypt file.pdf decrypted.pdf
+
+   RTF - no macros are possible, but files ride inside as OLE1 objects, and
+   RTF is the standard vehicle for Office parser exploits, CVE-2017-11882
+   (Equation Editor) most of all:
+     rtfobj file.rtf
+     rtfdump.py file.rtf
+     rtfdump.py file.rtf -s <n> -H -d > obj.bin && file obj.bin
+   An Equation, OLE2Link, or Package object is the exploit shape. An MZ
+   header at a non-zero offset inside the extracted object is a hidden PE.
+
+9. Check for appended or hidden content
+     binwalk file.doc
+     binwalk -Me file.doc          # recursive extraction
+   Content past the nominal end of the file format is not an accident. (Skip
+   this for OOXML - a zip container legitimately looks like this to binwalk.)
+
+10. Re-triage every URL the document contains
+    Every URL found in step 7 goes back to stage 1. None of them is judged
+    on its domain name:
+      ../stage-1-url/analyze_url.sh "<url>" 2
+    The script emits CHAIN::EXTERNAL_URL:: for each one so a caller does
+    this automatically.
+
+11. Score, decide, and act
+    -> ../stage-3-verdict/procedure.txt
+
+ESCALATE WITHOUT WAITING FOR MORE EVIDENCE IF
+----------------------------------------------
+  - an auto-run trigger appears together with a shell or download keyword
+  - a DDE / DDEAUTO field is present
+  - an .exe, .hta, .lnk, .scr, or archive sits under embeddings/
+  - VirusTotal detections are above zero
+  - a PDF has /Launch, or /OpenAction together with /JavaScript
+  - an RTF carries an Equation, OLE2Link, or Package object
+  - a remote template (attachedTemplate) points off-box
+  - the file was already opened on a production machine
+
+Escalation is not the end of triage. It means the response clock starts now
+and the rest of the analysis continues in parallel.
+
+WHAT THIS STAGE DOES NOT DO
+----------------------------
+- Runtime-constructed URLs. olevba flags suspicious keywords and decodes the
+  obvious strings, but a URL built by VBA string concatenation at execution
+  time never appears as literal text. A document with no URLs in its static
+  content can still call home.
+- Password-protected documents and archives it does not have the password
+  for. Extract manually, in isolation, first.
+- Exploit confirmation. Finding an Equation object tells you the shape of the
+  attack; it does not decode the shellcode. That is the detonation lab.
+- Behaviour. What the document actually does when opened requires detonation
+  in an isolated VM: modules/detonation-lab/.
+- Containers this stage does not route: LNK, ISO/IMG/VHD, CHM, XLL add-ins,
+  OneNote (.one). These are increasingly common delivery wrappers and are
+  currently a gap - treat them as samples for the lab, not as documents.
+- Proving safety. A clean report from every step narrows the risk. It does
+  not eliminate it.
+
+CHAIN MARKERS
+-------------
+Consumes: CHAIN::ATTACHMENT::   (stage 0)
+          CHAIN::SAVED_DOC::    (stage 1)
+Emits:    CHAIN::EXTERNAL_URL:: every URL found inside -> stage 1
+          CHAIN::FILE_SHA256::  hash of the sample     -> stage 3
+          CHAIN::FLAG::<weight>:: a red flag with its weight -> stage 3
+          CHAIN::FLAG::incomplete:: a check that did NOT run -> stage 3
+          CHAIN::REPORT_PATH::  report location        -> stage 3
+
+TIME BUDGET
+-----------
+Script run, one document   1-3 minutes
+Manual review of report    5-15 minutes
+Deep dive (PDF objects, RTF object extraction, p-code)   15-45 minutes

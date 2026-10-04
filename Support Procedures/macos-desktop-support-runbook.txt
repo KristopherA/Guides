@@ -1,0 +1,1743 @@
+================================================================================
+MACOS DESKTOP SUPPORT RUNBOOK
+Audience : IT / Help Desk Staff
+Coverage : macOS Sonoma 14, Sequoia 15, Tahoe 26
+Updated  : 2026-09-14
+================================================================================
+
+TABLE OF CONTENTS
+  1.  Quick Reference — Diagnostic Boot Modes
+  2.  Performance & Slowness
+  3.  Application Crashes & Freezes
+  4.  Network & Connectivity
+  5.  Disk & Storage
+  6.  User Accounts & Login
+  7.  Display & Peripherals
+  8.  Software Updates & App Installation
+  9.  Security & Privacy
+  10. Advanced — Kernel Panics
+  11. Advanced — Directory Services (dscl / LDAP / AD)
+  12. Advanced — FileVault & Encryption
+  13. Advanced — System Integrity Protection (SIP)
+  14. Advanced — Launch Agents & Daemons
+  15. Printing
+  16. Audio
+  17. Battery & Power Management
+  18. MDM Troubleshooting (Jamf / Mosyle)
+  19. Certificates & PKI
+  20. VPN Client Troubleshooting
+  21. Rosetta 2 & Apple Silicon Compatibility
+  22. Erase All Content and Settings
+  23. Apple Configurator 2 & DFU Restore
+  24. Remote Support — Screen Sharing & Apple Remote Desktop
+  25. Remote Login — SSH
+  26. Time Machine Troubleshooting
+  27. Canonical Diagnostic Collector
+  28. Preventive Maintenance Checklist
+
+Key to notation:
+  [GUI]  = performed in a graphical app or System Settings
+  [CLI]  = Terminal command
+  [BOOT] = requires restart into a special boot mode
+  [CHANGE] = changes configuration or service state; authorization required
+  [DESTRUCTIVE] = can remove data, access, or configuration; backup and change
+                  approval required
+
+OPERATING RULES
+  1. Diagnose before changing. Start with the canonical collector in Section 27.
+  2. Confirm the exact Mac, user, volume, service, and symptom before every change.
+  3. For [CHANGE] actions, record authorization, current state, expected result,
+     rollback, and a validation step in the ticket.
+  4. For [DESTRUCTIVE] actions, confirm a current usable backup and explicit
+     approval. Prefer moving or exporting data over deleting it.
+  5. Never place passwords, recovery keys, tokens, or private keys in command
+     arguments, shell history, report files, or tickets.
+  6. Do not weaken Gatekeeper, SIP, firewall policy, SMB signing, secure boot,
+     or MDM controls as a troubleshooting shortcut.
+  7. Apple startup, DFU, erase, and security procedures vary by model and OS.
+     Verify the current model-specific Apple procedure immediately before use.
+  8. Reports can contain personal, device, network, and organization data.
+     Use vendor or public redaction and review the complete report before sharing.
+
+================================================================================
+1. QUICK REFERENCE — DIAGNOSTIC BOOT MODES
+================================================================================
+
+SAFE MODE
+  Purpose : Loads only essential kernel extensions; disables login items and
+            third-party fonts. Useful for isolating software conflicts.
+  Intel   : Hold Shift at startup chime, release at login screen.
+  Apple   : Shut down → hold Power → select drive → hold Shift → Continue in
+            Safe Mode.
+  Verify  : "Safe Boot" appears in menu bar or Apple > About This Mac > System
+            Report > Software > Boot Mode.
+
+RECOVERY MODE
+  Purpose : Access Disk Utility, Terminal, reinstall macOS, reset passwords,
+            manage SIP and FileVault.
+  Intel   : Hold Cmd+R at startup.
+  Apple   : Hold Power button until "Loading startup options" appears, then
+            select Options > Continue.
+
+SINGLE-USER MODE (Intel only, legacy)
+  Purpose : fsck and low-level filesystem repair without full boot.
+  Method  : Hold Cmd+S at startup.
+  Note    : Replaced by Recovery Mode Terminal on Apple Silicon.
+
+DIAGNOSTICS (Apple Hardware Test)
+  Purpose : Test RAM, GPU, sensors for hardware faults.
+  Intel   : Hold D at startup (or Option+D for internet diagnostics).
+  Apple   : Hold Power until startup options appear, then hold Command-D.
+  Source  : https://support.apple.com/102550
+
+VERBOSE MODE
+  Purpose : Show kernel/boot messages to identify where a stall occurs.
+  Intel   : Hold Cmd+V at startup.
+  Apple   : Do not alter NVRAM as a routine help-desk step. Use Recovery logs,
+            Safe Mode, Apple Diagnostics, or sysdiagnose; escalate if persistent
+            boot arguments are genuinely required.
+
+NVRAM / PRAM RESET (Intel only)
+  Method  : Hold Cmd+Option+P+R at startup for ~20 seconds (two chimes).
+  Fixes   : Display resolution stuck, startup disk forgotten, volume/time zone
+            issues.
+  Apple M : NVRAM resets automatically on each boot; not user-actionable.
+
+SMC RESET (Intel only)
+  Desktop : Unplug power 15 sec, replug, wait 5 sec, power on.
+  Laptop  : Shut down → hold Left Shift+Ctrl+Option+Power 10 sec → release →
+            power on.
+  Fixes   : Fan always on, battery not charging, sleep/wake issues, USB-C
+            power negotiation.
+  Apple M : SMC equivalent is reset by shutting down 30 sec then booting.
+
+================================================================================
+2. PERFORMANCE & SLOWNESS
+================================================================================
+
+SYMPTOM: System is generally slow, fans running high
+----------
+
+STEP 1 — Identify CPU/memory consumers
+  [CLI] top -o cpu -n 20
+  [GUI] Open Activity Monitor > CPU tab, sort by % CPU descending.
+
+  Look for:
+    - mds_stores     : Spotlight indexing (high after updates, resolves itself)
+    - WindowServer   : Display compositor; high = GPU pressure or memory leak
+    - kernel_task    : Throttling CPU to protect thermals; check fans/vents
+    - backupd        : Time Machine backup in progress
+
+STEP 2 — Check memory pressure
+  [GUI] Activity Monitor > Memory tab > Memory Pressure graph.
+    Green  = healthy
+    Yellow = paging occurring, check Swap Used value
+    Red    = critical; system is swapping heavily
+
+  [CLI] vm_stat
+    Sustained memory pressure together with rapidly increasing swap and an
+    affected workload indicates memory contention. Non-zero cumulative swap
+    alone does not prove that RAM was exhausted.
+
+STEP 3 — Check disk I/O bottleneck
+  [GUI] Activity Monitor > Disk tab, sort by Bytes Read+Written.
+  [CLI] iostat -w 2
+    If disk is pegged: check for large backup, sync, or AV scan.
+
+STEP 4 — Review Spotlight indexing
+  [CLI] sudo mdutil -s /
+    "Indexing enabled" with no completion = still building index.
+  [CLI] mdimport -L   (lists importers; a crashed importer can stall indexing)
+
+  Rebuild Spotlight index:
+  [CLI] sudo mdutil -E /
+  [GUI] System Settings > Siri & Spotlight > Spotlight Privacy > add / remove
+        the drive to force a reindex.
+
+STEP 5 — Disable unwanted Login Items
+  [GUI] System Settings > General > Login Items & Extensions.
+        Remove anything unnecessary from "Open at Login."
+
+STEP 6 — Check thermal throttling (Apple Silicon)
+  [CLI] sudo powermetrics --samplers smc -n 1 | grep -i temp
+  [CLI] sudo powermetrics --samplers cpu_power -n 1
+  Expected: CPU temp < 90 °C under load. Above that = throttle likely.
+
+STEP 7 — Check for memory leaks (long-running process)
+  [CLI] leaks <PID>
+  If leaks found, restart the offending app or service.
+
+RESOLUTION: If no single process is responsible and swap is high, the machine
+needs more RAM or workload reduction. Document findings and escalate if
+hardware upgrade is warranted.
+
+---
+
+SYMPTOM: Spinning beach ball (SPOD) on one app only
+----------
+
+STEP 1 — Sample the hung process
+  [CLI] sample <AppName> 5 -f /tmp/sample.txt && open /tmp/sample.txt
+  Look for a blocking system call (e.g., waiting on network, file lock).
+
+STEP 2 — Check open files / network connections by the app
+  [CLI] lsof -p <PID>
+  Look for files in a disconnected network volume (NFS, SMB, AFP).
+
+STEP 3 — Force quit if needed
+  [GUI] Cmd+Option+Esc > select app > Force Quit
+  [CHANGE][CLI] kill <PID>
+  Wait and verify the process exits. Use kill -9 only after a normal termination
+  fails and data-loss risk has been explained.
+
+STEP 4 — Clear app cache
+  [CHANGE] Quit the app, move only its confirmed bundle-specific cache folder to
+  an approved quarantine location, then relaunch. Restore it if the symptom is
+  unchanged. Do not broadly delete ~/Library/Caches.
+
+================================================================================
+3. APPLICATION CRASHES & FREEZES
+================================================================================
+
+STEP 1 — Read crash reports
+  [GUI] Console.app > Crash Reports (left sidebar).
+        Filter by app name. Look at "Exception Type" and "Crashed Thread."
+  [CLI] ls ~/Library/Logs/DiagnosticReports/ | grep <AppName>
+  [CLI] cat ~/Library/Logs/DiagnosticReports/<report>.ips
+
+  Common exception types:
+    EXC_BAD_ACCESS    : Memory access violation (often corrupted prefs/cache)
+    EXC_CRASH (SIGABRT): App called abort(); often assertion failure
+    SIGKILL           : System or Watchdog terminated the app (thermal, memory)
+
+STEP 2 — Check system log around crash time
+  [CLI] log show --predicate 'process == "AppName"' --last 1h --style compact
+
+STEP 3 — Clear preference file (reset to defaults)
+  [CHANGE] Quit the app and export or move only its confirmed preference domain
+  to quarantine. Relaunch and test; restore the preference if the symptom is
+  unchanged. Confirm whether MDM manages the preference before changing it.
+
+STEP 4 — Check for incompatible kernel extensions / plugins
+  [CLI] systemextensionsctl list
+  [CLI] kmutil showloaded | grep -v com.apple
+  Do not remove endpoint security, VPN, or network extensions to isolate a
+  symptom without security/network-owner approval and a rollback plan.
+
+STEP 5 — Reinstall app
+  Delete app bundle from /Applications, redownload.
+  For App Store apps: App Store > Purchased > Install.
+
+STEP 6 — Run Disk Utility First Aid (corrupted app support files may cause
+  crashes via bad library links)
+  See Section 5 — Disk & Storage.
+
+STEP 7 — Collect sysdiagnose for vendor escalation
+  [CLI] sudo sysdiagnose -f ~/Desktop/
+  Creates a .tar.gz with logs, crash reports, spindump, network state.
+  Share with Apple or app vendor support.
+
+================================================================================
+4. NETWORK & CONNECTIVITY
+================================================================================
+
+SYMPTOM: No internet / intermittent drops
+----------
+
+STEP 1 — Basic connectivity check
+  [CLI] ping -c 4 8.8.8.8         (tests IP routing)
+  [CLI] ping -c 4 google.com      (tests DNS resolution)
+  [CLI] nslookup google.com       (explicit DNS query)
+
+STEP 2 — Show network interface state
+  [CLI] ifconfig en0              (Wi-Fi, usually en0 or en1)
+  [CLI] ifconfig en1              (Ethernet)
+  Look for "status: active" and a valid inet (IPv4) address.
+
+STEP 3 — Show routing table
+  [CLI] netstat -rn
+  Verify a default route (0.0.0.0/0 or default) points to the gateway.
+
+STEP 4 — Flush DNS cache
+  [CLI] sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+  Confirm: No output = success.
+
+STEP 5 — Renew DHCP lease
+  [GUI] System Settings > Network > Wi-Fi > Details > TCP/IP > Renew Lease.
+  [CLI] sudo ipconfig set en0 DHCP
+
+STEP 6 — Remove and re-add Wi-Fi network
+  [GUI] System Settings > Network > Wi-Fi > Details > Forget This Network.
+  Reconnect with credentials.
+
+STEP 7 — Reset network configuration
+  [CHANGE] Do not delete SystemConfiguration preference files as a routine fix;
+  that can remove VPN, proxy, interface, and managed network configuration.
+  Capture current network services and MDM profiles, test in a new network
+  location or known-good interface, and escalate to the network/MDM owner if a
+  managed setting is implicated.
+
+STEP 8 — Check for conflicting DNS or proxy (common with VPN clients)
+  [CLI] networksetup -getdnsservers Wi-Fi
+  [CLI] networksetup -getwebproxy Wi-Fi
+  Unexpected values = another tool or MDM is setting these. Check VPN client.
+
+---
+
+SYMPTOM: Wi-Fi connects but speed is poor
+----------
+
+STEP 1 — Check signal and noise
+  Hold Option and click the Wi-Fi menu bar icon.
+  Look for: RSSI > -70 dBm (good), Noise < -85 dBm, channel congestion.
+
+STEP 2 — Check for channel congestion
+  [GUI] Wireless Diagnostics.app (Cmd+Space, type Wireless Diagnostics).
+        Window > Scan. Review channel recommendations.
+
+STEP 3 — Capture wireless traffic for diagnostics
+  [GUI] Wireless Diagnostics > Window > Sniffer. Select channel and width.
+        Stop capture. Open .pcap in Wireshark if needed.
+
+STEP 4 — Check Quality of Service / throttling
+  [CLI] nettop -m tcp              (live per-process bandwidth)
+
+---
+
+SYMPTOM: Cannot connect to SMB / network share
+----------
+
+STEP 1 — Test SMB port reachability
+  [CLI] nc -zv <server> 445
+  "succeeded" = port open. "Connection refused" = firewall or SMB not running.
+
+STEP 2 — Mount share manually
+  [CLI] open smb://<server>/<share>
+  [CLI] mount -t smbfs //<user>@<server>/<share> /Volumes/<localname>
+
+STEP 3 — Clear SMB credentials
+  [GUI] Keychain Access.app > search for the server name > delete entries.
+  Retry connection.
+
+STEP 4 — Force SMB signing / version (if server is old)
+  Do not disable SMB signing or globally force an obsolete dialect to make a
+  legacy server work. Confirm server capabilities, client/server logs, DNS,
+  Kerberos, time, and the organization SMB baseline. Remediate or isolate the
+  server; document any formally approved exception.
+
+================================================================================
+5. DISK & STORAGE
+================================================================================
+
+STEP 1 — Check disk health (SMART status)
+  [CLI] diskutil info disk0 | grep -i SMART
+  "Verified" = healthy. "Failing" = replace immediately, begin data backup now.
+
+  More detail:
+  [CLI] system_profiler SPStorageDataType
+
+STEP 2 — Run First Aid (fsck equivalent)
+  [GUI] Disk Utility.app > select volume > First Aid > Run.
+  [CLI] (in Recovery Mode or on external boot)
+        diskutil repairVolume /
+  For non-boot volumes:
+  [CLI] diskutil repairVolume /Volumes/<name>
+
+  Errors that First Aid cannot fix → Erase and restore from backup, or use
+  third-party tool (DiskWarrior, Drive Genius).
+
+STEP 3 — Check free space
+  [CLI] df -H
+  [GUI] Apple menu > About This Mac > Storage (visual breakdown).
+  Minimum recommended free: 15–20 GB (macOS needs swap and temp space).
+
+STEP 4 — Find large files consuming space
+  [CLI] du -sh ~/* | sort -rh | head -20
+  [CLI] sudo du -sh /private/var/folders | sort -rh
+  [CLI] find / -size +1G -not -path "*/proc/*" 2>/dev/null
+
+  Do not install package managers or pipe internet content into a shell during
+  routine diagnosis. Use System Settings > General > Storage, the canonical
+  collector's storage profile, or an organization-approved inventory tool.
+
+STEP 5 — Clear system caches
+  Broad cache deletion is not an approved general repair. Isolate a confirmed
+  app-specific cache, quit the app, move the cache to quarantine, test, and
+  restore it if the symptom is unchanged. Escalate system-cache corruption.
+
+STEP 6 — Manage Time Machine local snapshots
+  [CLI] tmutil listlocalsnapshots /          (list snapshots)
+  [CHANGE][CLI] tmutil deletelocalsnapshots <date>   (delete verified snapshot)
+  [CHANGE][CLI] sudo tmutil thinlocalsnapshots / 10000000000 4
+        (aggressive thin to reclaim ~10 GB)
+
+STEP 7 — Erase and reformat a drive
+  [DESTRUCTIVE][CLI] diskutil eraseDisk APFS <VolumeName> /dev/disk<N>
+  [GUI] Disk Utility > select drive > Erase > choose APFS or Mac OS Extended.
+
+  Verify identifier first: diskutil list
+
+STEP 8 — Partition a drive
+  [DESTRUCTIVE][CLI] diskutil partitionDisk /dev/disk<N> 2 GPT \
+        APFS "Macintosh HD" 200g \
+        APFS "Data" R
+
+================================================================================
+6. USER ACCOUNTS & LOGIN
+================================================================================
+
+SYMPTOM: User cannot log in (password rejected)
+----------
+
+STEP 1 — Verify Caps Lock is off. Try again.
+
+STEP 2 — Reset password from Recovery Mode
+  Boot Recovery Mode (Section 1).
+  [BOOT][CLI] resetpassword    (opens Reset Password utility)
+  Select the user and set a new password.
+
+STEP 3 — Reset via admin account
+  [GUI] System Settings > Users & Groups > select user > Reset Password.
+
+STEP 4 — Unlock disabled account (after too many failed attempts)
+  [CHANGE] Use System Settings, the approved identity-management workflow, or
+  Recovery password reset. Do not clear all account policies and do not put a
+  password in a command argument. Confirm Secure Token/FileVault implications.
+
+---
+
+SYMPTOM: User profile loads to blank / grey desktop
+----------
+
+STEP 1 — Check disk permissions on home folder
+  [CLI] ls -la /Users/<username>
+  A few root-owned application files can be normal. Do not recursively chown an
+  entire home directory. Capture the specific incorrect path and ACL, then use
+  an approved user-permissions repair or correct only the validated item.
+
+STEP 2 — Check for corrupted login items
+  Log in as another administrator and inspect the affected user's explicit home
+  path; '~' would refer to the administrator and is therefore unsafe here. Use
+  System Settings > General > Login Items & Extensions first. If a specific
+  per-user file is proven corrupt, move it to quarantine with owner/ACL metadata
+  preserved, test, and document the rollback.
+
+STEP 3 — Create a new test user to isolate profile corruption
+  [GUI] System Settings > Users & Groups > Add User.
+  Log in as new user. If desktop loads: original profile is corrupted.
+  Migrate data by copying ~/Documents, ~/Desktop, ~/Downloads manually.
+
+---
+
+SYMPTOM: Login loop (macOS keeps returning to login screen)
+----------
+
+STEP 1 — Boot Safe Mode (disables login items). If login succeeds:
+  Disable login items one by one. Likely culprit: VPN, AV, or sync agent.
+
+STEP 2 — Check disk for errors (corrupted filesystem causes this)
+  First Aid as per Section 5, Step 2.
+
+STEP 3 — Check /etc/passwd and /etc/auto_master are not corrupted
+  [CLI] dscl . list /Users
+  [CLI] dscl . read /Users/<username>
+
+---
+
+SYMPTOM: macOS asks for Apple ID password repeatedly
+----------
+
+STEP 1 — Sign out and back in to iCloud
+  [GUI] System Settings > [Apple ID] > Sign Out. Wait 60 sec. Sign back in.
+
+STEP 2 — Delete keychain entry
+  Do not delete all iCloud or Apple Account entries. Capture the exact prompt and
+  affected service, verify account status and time, then remove only a confirmed
+  stale item with the user's approval or escalate to identity support.
+
+STEP 3 — Reset keychain (last resort — loses stored passwords)
+  [CLI] security create-keychain ~/Library/Keychains/login.keychain-db
+  Or: Keychain Access > Keychain Access menu > Reset Default Keychain.
+
+================================================================================
+7. DISPLAY & PERIPHERALS
+================================================================================
+
+SYMPTOM: External display not detected
+----------
+
+STEP 1 — Check physical connection. Try a different cable and port.
+
+STEP 2 — Detect displays
+  [GUI] System Settings > Displays > hold Option, click "Detect Displays."
+
+STEP 3 — Reset display preferences
+  [CHANGE] First test another cable, port, display, user, and Safe Mode. If a
+  specific display preference is proven corrupt, move it to quarantine with
+  metadata preserved, reboot, and restore it if the symptom is unchanged.
+
+STEP 4 — Reset NVRAM (Intel) — restores default display resolution settings.
+  See Section 1.
+
+STEP 5 — Check for GPU issue
+  [CLI] system_profiler SPDisplaysDataType
+  Note the GPU listed. If Radeon/Intel/Nvidia shows errors in Console, GPU
+  driver may need reinstall via macOS update.
+
+---
+
+SYMPTOM: USB / Thunderbolt device not recognized
+----------
+
+STEP 1 — Check System Information
+  [GUI] Apple > About This Mac > System Report > USB (or Thunderbolt).
+  Device should appear in the tree even if not functional.
+
+STEP 2 — Reset USB
+  Do not unload Apple USB kernel components. Disconnect the peripheral, shut
+  down, verify cable/power/port and vendor compatibility, then retest after boot.
+
+STEP 3 — Check USB power budget
+  [CLI] ioreg -l | grep -i "available current"
+  Bus-powered hubs may exceed power budget. Use powered hub.
+
+STEP 4 — Reset SMC (Intel) — SMC controls USB power rails.
+  See Section 1.
+
+---
+
+SYMPTOM: Bluetooth device drops or won't pair
+----------
+
+STEP 1 — Delete pairing and re-pair device.
+  [GUI] System Settings > Bluetooth > device > (i) > Forget Device.
+
+STEP 2 — Reset Bluetooth module
+  [CLI] sudo pkill bluetoothd
+  Daemon restarts automatically. Pair device again.
+
+STEP 3 — Delete Bluetooth preferences
+  [CHANGE] Forget and re-pair the specific device first. If preferences are
+  proven corrupt, move the specific file to an approved backup location and
+  document how to restore it; do not delete preferences broadly.
+
+STEP 4 — Check for Wi-Fi / Bluetooth interference (both use 2.4 GHz).
+  Switch Wi-Fi to 5 GHz band if possible.
+  [GUI] Wireless Diagnostics > Window > Environment.
+
+================================================================================
+8. SOFTWARE UPDATES & APP INSTALLATION
+================================================================================
+
+STEP 1 — Check for pending updates
+  [CLI] softwareupdate -l
+  [GUI] System Settings > General > Software Update.
+
+STEP 2 — Install a specific update from CLI
+  [CLI] softwareupdate -i "<UpdateName>"   (use exact name from list)
+  [CLI] softwareupdate -ia --restart       (install all, restart if needed)
+
+STEP 3 — Clear update cache if updates fail to download
+  Do not delete /Library/Updates or broad /private/var content. Restart, verify
+  free space, date/time, network and MDM deferrals, capture Software Update logs,
+  and use Recovery reinstall or the approved MDM workflow if the failure persists.
+
+STEP 4 — App Gatekeeper rejection ("cannot be opened because developer
+  cannot be verified")
+  Verify the app's approved source, hash/signature, notarization, and business
+  need. If authorized, use System Settings > Privacy & Security > Open Anyway
+  for that app. Do not recursively remove quarantine attributes or disable
+  Gatekeeper globally.
+
+STEP 5 — Check code signature of an app
+  [CLI] codesign -dv --verbose=4 /Applications/<AppName>.app
+  [CLI] codesign --verify --deep /Applications/<AppName>.app
+  "valid on disk" and "satisfies its Designated Requirement" = signed correctly.
+
+STEP 6 — Force macOS installer to run (if installer app corrupted)
+  Re-download from App Store or Apple's software download page.
+  Run from Recovery Mode Terminal for full reinstall without data loss:
+  [BOOT][CLI] /Volumes/<macOS Installer>/Install\ macOS\ <Version>.app/
+              Contents/Resources/startosinstall --agreetolicense --volume /
+
+================================================================================
+9. SECURITY & PRIVACY
+================================================================================
+
+STEP 1 — Check running processes for anomalies
+  [CLI] ps aux | grep -v "^ *root\|^ *_\|^ *daemon"
+  [CLI] launchctl list | grep -v "com.apple\|0\t-"
+  Look for unknown or unsigned processes. Cross-reference with Activity Monitor.
+
+STEP 2 — Check network connections for suspicious outbound traffic
+  [CLI] netstat -an | grep ESTABLISHED
+  [CLI] lsof -i -n -P | grep ESTABLISHED
+  [CLI] nettop -m tcp -n     (live, per-process view)
+
+STEP 3 — Check Login Items and Launch Agents (persistence mechanisms)
+  [CLI] ls -la ~/Library/LaunchAgents/
+  [CLI] ls -la /Library/LaunchAgents/
+  [CLI] ls -la /Library/LaunchDaemons/
+  [GUI] System Settings > General > Login Items & Extensions.
+  Verify each entry belongs to a known app. Unknown plists = investigate.
+
+STEP 4 — Check for malicious cron jobs
+  [CLI] crontab -l          (current user)
+  [CLI] sudo crontab -l     (root)
+  [CLI] ls /private/etc/cron.d/
+
+STEP 5 — Verify System Integrity Protection status
+  [CLI] csrutil status
+  Expected: "System Integrity Protection status: enabled."
+  Disabled SIP is a significant security risk — investigate cause.
+
+STEP 6 — Check Firewall status
+  [GUI] System Settings > Network > Firewall.
+  [CLI] sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+  [CLI] sudo /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
+
+STEP 7 — Audit SSH authorized keys
+  [CLI] cat ~/.ssh/authorized_keys
+  [CLI] cat /etc/ssh/sshd_config | grep -E "PermitRoot|Password|AuthorizedKeys"
+
+STEP 8 — Check Privacy permissions granted to apps
+  [GUI] System Settings > Privacy & Security > (Camera, Mic, Full Disk Access,
+        Accessibility, etc.)
+  [CHANGE][CLI] tccutil reset All <bundle.id>   (reset one approved app)
+  Do not reset all TCC services globally. Reset only the affected service and
+  bundle identifier with user/change approval, then retest.
+
+  TCC database (read-only view):
+  [CLI] sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db
+        "SELECT client, service, auth_value FROM access;"
+
+STEP 9 — Run a malware scan (native)
+  XProtect and its remediation components run under macOS control; there is no
+  supported help-desk command here to force a complete scan. Verify background
+  security updates and inspect XProtect-related logs. For an incident, preserve
+  evidence and follow the security-response process.
+
+  For additional assurance, use a reputable third-party scanner (e.g.,
+  Malwarebytes, Jamf Protect) on managed machines.
+
+================================================================================
+10. ADVANCED — KERNEL PANICS
+================================================================================
+
+STEP 1 — Locate the panic log
+  [CLI] ls /Library/Logs/DiagnosticReports/*.panic
+  [CLI] cat /Library/Logs/DiagnosticReports/<latest>.panic
+  [GUI] Console.app > Crash Reports > filter for ".panic"
+
+STEP 2 — Read key fields in the panic report
+  "Panicstring"         : Describes what triggered the panic.
+  "Backtrace"           : Stack trace at time of panic.
+  "Kernel Extensions in backtrace" : Identifies offending kext (if any).
+  "MAC Framework policy" : SEP or security policy violation.
+
+STEP 3 — Identify hardware vs. software panic
+  Software panic : Usually shows a kext name or process in backtrace.
+                   Fix: Remove offending extension, update drivers.
+  Hardware panic : Shows "no locks taken" or RAM/CPU addresses.
+                   Fix: Run Apple Diagnostics (Section 1). Test RAM with
+                   memtest86 if Intel. Check for overheating (Section 2).
+
+STEP 4 — Common panic causes and fixes
+  "com.apple.iokit.IOUSBFamily" panic    : Faulty USB device. Unplug all USB
+    peripherals, isolate by plugging in one at a time.
+  "com.apple.filesystems.smbfs" panic    : SMB filesystem crash. Unmount
+    shares before sleep. Update macOS.
+  Third-party kext in backtrace          : Uninstall the associated software
+    (AV, VPN, audio drivers). Check vendor for updated kext.
+  Repeated panics with no kext listed    : Likely hardware (RAM, SSD, GPU).
+    Run full Apple Diagnostics, replace suspect component.
+
+STEP 5 — Check if panic is reproducible in Safe Mode
+  Safe Mode disables all third-party kexts. If panics stop = software cause.
+  If panics continue = hardware cause.
+
+STEP 6 — Collect full sysdiagnose for Apple support
+  [CLI] sudo sysdiagnose -f ~/Desktop/
+  Reference: https://developer.apple.com/bug-reporting/profiles-and-logs/
+
+================================================================================
+11. ADVANCED — DIRECTORY SERVICES (dscl / LDAP / AD)
+================================================================================
+
+STEP 1 — Check directory service status
+  [CLI] sudo dscl . list /Users         (local users)
+  [CLI] sudo dscacheutil -configuration  (show cached directory config)
+  [CLI] dscl /Active\ Directory/<domain>/All\ Domains list /Users
+
+STEP 2 — Verify AD / LDAP binding
+  [CLI] dsconfigad -show               (Active Directory settings)
+  [GUI] System Settings > Users & Groups > Network Account Server > Edit.
+  "Connected" status expected. "Not Connected" = binding broken.
+
+STEP 3 — Rebind to Active Directory
+  [CHANGE] Use the approved directory-management workflow and interactive
+  credential prompts. Never place directory or local administrator passwords in
+  command arguments. Confirm a tested local administrator and FileVault access
+  before unbinding; document the original binding and rollback.
+
+STEP 4 — Flush Directory Services cache
+  [CLI] sudo dscacheutil -flushcache
+  [CLI] sudo killall -HUP DirectoryService   (macOS 10.x legacy)
+  [CLI] sudo launchctl kickstart -k system/com.apple.opendirectoryd
+
+STEP 5 — Test LDAP connectivity
+  [CLI] ldapsearch -H ldap://<dc.domain.com> -x -b "dc=domain,dc=com" \
+        -D "user@domain.com" -W "(sAMAccountName=testuser)"
+  Expected: returns user object attributes.
+  "Can't contact LDAP server" = network or DNS issue; check Step 4 / Sec. 4.
+
+STEP 6 — View mobile account sync status (AD bound Macs with cached creds)
+  [CLI] dscl . read /Users/<username> | grep -i cached
+  [CLI] id <username>                          (should show AD UID/GID)
+
+================================================================================
+12. ADVANCED — FILEVAULT & ENCRYPTION
+================================================================================
+
+STEP 1 — Check FileVault status
+  [CLI] fdesetup status
+  "FileVault is On" = encrypted and running normally.
+  "FileVault is Off" = not encrypted.
+  "Encryption in progress" = mid-encrypt; do not forcibly reboot.
+
+STEP 2 — List FileVault-enabled users
+  [CLI] sudo fdesetup list
+  Each line: UUID,username. All users who need to unlock must be listed.
+
+STEP 3 — Add a user to FileVault
+  [CHANGE][CLI] sudo fdesetup add -usertoadd <username>
+  The user must enter their password to create a token.
+
+STEP 4 — Generate a new FileVault recovery key
+  [CHANGE][CLI] sudo fdesetup changerecovery -personal
+  Store the new key in a secure, documented location (e.g., MDM escrow).
+
+STEP 5 — Verify recovery key is valid (without unlocking)
+  [CLI] sudo fdesetup validaterecovery
+  Enter the stored recovery key. "true" = key is valid.
+
+STEP 6 — Unlock / decrypt with recovery key (at login screen)
+  Restart > hold Power (Apple) or Cmd+R (Intel) > enter recovery key at prompt.
+  In Recovery, use the supported unlock workflow and enter the recovery key only
+  into an interactive secure prompt. Never place a recovery key on a command line.
+
+STEP 7 — Disable FileVault (compliance-only, not recommended)
+  [DESTRUCTIVE][CHANGE] Disabling FileVault requires security-owner approval, a
+  current backup, power, sufficient time, and confirmation that policy permits it.
+  Use the approved MDM or interactive workflow; do not use it as troubleshooting.
+  Decryption runs in background. Check progress: fdesetup status
+
+STEP 8 — Check MDM-escrowed key status (Jamf / MDM)
+  Trigger re-escrow:
+  [CLI] sudo fdesetup changerecovery -institutional \
+        -keychain /Library/Keychains/FileVaultMaster.keychain
+
+================================================================================
+13. ADVANCED — SYSTEM INTEGRITY PROTECTION (SIP)
+================================================================================
+
+NOTE: SIP disabling should only be done for documented, temporary purposes
+(e.g., installing certain kernel extensions, developer work). Always re-enable.
+
+STEP 1 — Check SIP status
+  [CLI] csrutil status
+  Expected: "System Integrity Protection status: enabled."
+
+STEP 2 — Disable SIP (requires Recovery Mode)
+  [BOOT] Boot Recovery Mode (Section 1).
+  [BOOT][CLI] csrutil disable
+  Reboot. Confirm with: csrutil status
+
+STEP 3 — Enable SIP (requires Recovery Mode)
+  [BOOT] Boot Recovery Mode.
+  [BOOT][CLI] csrutil enable
+  Reboot. Confirm with: csrutil status
+
+STEP 4 — Partial SIP configurations
+  Do not prescribe partial SIP flags in a general help-desk runbook. They are
+  release-specific security exceptions and require security-owner approval plus
+  current Apple/vendor guidance.
+
+STEP 5 — Understand what SIP protects
+  Protected paths (read-only to all processes, even root):
+    /System, /usr (except /usr/local), /bin, /sbin
+  With SIP enabled, these cannot be written to regardless of permissions.
+
+STEP 6 — Authorized restores with SIP enabled (for Jamf / MDM)
+  Use MDM-pushed profiles and signed packages. Direct filesystem writes to
+  protected paths require signed installers via Apple's installer APIs.
+
+================================================================================
+14. ADVANCED — LAUNCH AGENTS & DAEMONS
+================================================================================
+
+Agents  : Run per-user, in user session (~/Library/LaunchAgents,
+          /Library/LaunchAgents)
+Daemons : Run as root, system-wide (/Library/LaunchDaemons,
+          /System/Library/LaunchDaemons)
+
+STEP 1 — List all loaded agents/daemons
+  [CLI] launchctl list                          (current user agents)
+  [CLI] sudo launchctl list                     (system daemons)
+  Columns: PID, Exit Status, Label
+  PID of "-" = not currently running.
+  Non-zero Exit Status = daemon crashed or exited with error.
+
+STEP 2 — Load / unload a launch item
+  Use modern launchctl domains and confirm the plist's owner and label first.
+  [CHANGE][CLI] launchctl bootstrap gui/<uid> ~/Library/LaunchAgents/<label>.plist
+  [CHANGE][CLI] launchctl bootout gui/<uid>/<com.example.label>
+  For daemons:
+  [CHANGE][CLI] sudo launchctl bootstrap system /Library/LaunchDaemons/<label>.plist
+  [CHANGE][CLI] sudo launchctl bootout system/<com.example.label>
+
+STEP 3 — Restart a daemon without reboot
+  [CLI] sudo launchctl kickstart -k system/<com.example.daemon>
+  "-k" = kill existing instance first.
+
+STEP 4 — View logs for a daemon
+  [CLI] log show --predicate 'subsystem == "com.example.daemon"' --last 1h
+  [CLI] log stream --predicate 'process == "daemonname"'    (live)
+
+STEP 5 — Validate a plist before loading
+  [CLI] plutil -lint /Library/LaunchDaemons/<label>.plist
+  "OK" = valid XML. Errors here prevent the daemon from loading.
+
+STEP 6 — Common keys in a Launch plist
+  Label            : Unique reverse-DNS identifier (required).
+  ProgramArguments : Array of command + args.
+  RunAtLoad        : true = start on load/login.
+  KeepAlive        : true = restart on crash.
+  StartCalendarInterval : Cron-like scheduling.
+  UserName         : Run as specific user (daemons only).
+  StandardOutPath / StandardErrorPath : Log file destinations.
+
+STEP 7 — Remove a misbehaving daemon permanently
+  [DESTRUCTIVE] Verify package ownership, signature, business function, and MDM
+  policy. Use the vendor uninstaller or approved package-management workflow.
+  Preserve the plist and logs for rollback/evidence; do not delete an unknown
+  daemon during incident response.
+
+================================================================================
+15. PRINTING
+================================================================================
+
+SYMPTOM: Printer not found / not showing up
+----------
+
+STEP 1 — Check printer is on and connected (USB or same network segment).
+  [CLI] lpstat -p -d          (list printers and default)
+  [CLI] lpstat -s             (show scheduler status and queues)
+  No output = CUPS scheduler not running.
+  [CLI] sudo launchctl start org.cups.cupsd
+
+STEP 2 — Add printer manually via CUPS web interface
+  [GUI] Open http://localhost:631 in browser.
+        Administration > Add Printer.
+  Or: System Settings > Printers & Scanners > + (Add Printer).
+
+STEP 3 — List available network printers (Bonjour / IPP)
+  [CLI] dns-sd -B _ipp._tcp .
+        Watch for printer hostnames. Ctrl+C to stop.
+  [CLI] ippfind                  (if installed via Xcode tools)
+
+STEP 4 — Add an IPP network printer from CLI
+  [CLI] lpadmin -p "PrinterName" -E -v ipp://<printer-ip>/ipp/print \
+        -m everywhere
+  "everywhere" uses driverless IPP Everywhere — no driver needed on macOS 11+.
+
+---
+
+SYMPTOM: Print job stuck in queue / queue jammed
+----------
+
+STEP 1 — View queue
+  [CLI] lpstat -o              (jobs in queue)
+  [CLI] lpq -P <PrinterName>
+
+STEP 2 — Cancel all jobs
+  [CLI] cancel -a <PrinterName>
+  [CLI] lprm -P <PrinterName> -
+
+STEP 3 — Reset the affected queue
+  Cancel the affected queue's jobs, restart the Mac or printing service using
+  the supported workflow, and retest. Do not broadly delete the system spool;
+  preserve failed jobs if audit or incident evidence may be required.
+
+STEP 4 — Remove and re-add printer
+  [GUI] System Settings > Printers & Scanners > select printer > - (Remove).
+  Re-add via CUPS or System Settings.
+
+---
+
+SYMPTOM: Printer added but jobs fail silently / wrong output
+----------
+
+STEP 1 — Check CUPS error log
+  [CLI] tail -50 /var/log/cups/error_log
+  [CLI] cat /var/log/cups/access_log | tail -20
+
+STEP 2 — Test with raw IPP print (bypasses driver)
+  [CLI] lpr -P <PrinterName> -o raw /path/to/testfile.txt
+
+STEP 3 — Update or reinstall driver
+  Download from manufacturer site. Install .pkg. Remove and re-add printer.
+  For PostScript printers: use Generic PostScript Printer driver (built in).
+
+STEP 4 — Reset printing system (removes ALL printers — use as last resort)
+  [GUI] System Settings > Printers & Scanners > right-click in printer list >
+        Reset printing system.
+  [CLI] sudo lpadmin -x <PrinterName>   (remove one printer only)
+
+================================================================================
+16. AUDIO
+================================================================================
+
+SYMPTOM: No sound output / wrong output device
+----------
+
+STEP 1 — Verify output device selection
+  [GUI] System Settings > Sound > Output. Select correct device.
+  [CLI] system_profiler SPAudioDataType   (list all audio devices)
+
+STEP 2 — Check volume and mute state
+  [CLI] osascript -e "output volume of (get volume settings)"
+  [CLI] osascript -e "set volume output volume 75"
+  [CLI] osascript -e "set volume with output muted false"
+
+STEP 3 — Restart Core Audio daemon (fixes most software audio issues)
+  [CLI] sudo killall coreaudiod
+  Daemon restarts automatically within a few seconds. Test audio.
+
+STEP 4 — Check for stuck audio process
+  [CLI] ps aux | grep -i audio
+  Look for "coreaudiod", "audiomxd", "AMPDevicesAgent". Kill any that are
+  zombie or consuming high CPU.
+
+STEP 5 — Check sample rate / format mismatch (common with DACs and HDMI)
+  [GUI] /Applications/Utilities/Audio MIDI Setup.app
+        Select device > Format dropdown. Match sample rate to source content
+        (44100 Hz for standard audio, 48000 Hz for video).
+
+STEP 6 — Check if audio jack is stuck in headphone mode
+  [GUI] System Settings > Sound > Output — if "Headphones" is shown but
+        nothing is plugged in, a headphone sensor is stuck.
+  Fix : Plug/unplug headphones several times. Blow compressed air into port.
+        Restart. If persistent, hardware fault.
+
+STEP 7 — Reset audio preferences
+  [CHANGE] Test another user and known-good output first. If a specific audio
+  preference is proven corrupt, move it to quarantine, reboot, validate, and
+  retain a documented rollback rather than deleting it.
+
+---
+
+SYMPTOM: Input (microphone) not working
+----------
+
+STEP 1 — Check TCC privacy permission for microphone
+  [GUI] System Settings > Privacy & Security > Microphone.
+        Ensure the relevant app is enabled.
+  [CLI] tccutil reset Microphone <com.bundle.id>   (reset one app's permission)
+
+STEP 2 — Check input level
+  [GUI] System Settings > Sound > Input > Input level meter should respond
+        to speech.
+
+STEP 3 — Test input from CLI
+  [CLI] rec -t wav /tmp/test.wav trim 0 5   (requires sox: brew install sox)
+  Plays back 5 sec recording. Confirms hardware is working.
+
+STEP 4 — Check for conflicting audio apps (Zoom, Teams, etc. grabbing device)
+  Close all apps that use the mic. Test in QuickTime > New Audio Recording.
+
+================================================================================
+17. BATTERY & POWER MANAGEMENT
+================================================================================
+
+STEP 1 — Check battery health
+  [GUI] Hold Option > click battery menu bar icon > "Condition."
+        Normal / Service Recommended / Service Battery.
+  [CLI] system_profiler SPPowerDataType | grep -A5 "Battery Information"
+        Look for "Cycle Count", "Condition", "Maximum Capacity".
+  [CLI] ioreg -l | grep -i "currentcapacity\|maxcapacity\|cyclecount"
+
+  Rule of thumb: MacBooks rated for ~1000 cycles. Above that, expect degraded
+  runtime. Capacity < 80% of design = replacement recommended.
+
+STEP 2 — View current power settings
+  [CLI] pmset -g         (current settings)
+  [CLI] pmset -g live    (live power state)
+  [CLI] pmset -g batt    (battery percentage and charging state)
+  [CLI] pmset -g ps      (power source info)
+
+STEP 3 — View sleep/wake and power event history
+  [CLI] pmset -g log | grep -E "Sleep|Wake|Assertions|DarkWake" | tail -40
+  [CLI] log show --predicate 'subsystem == "com.apple.powerd"' --last 4h
+
+STEP 4 — Identify what is preventing sleep
+  [CLI] pmset -g assertions
+  Look for "PreventUserIdleSystemSleep" held by an app.
+  [CLI] pmset -g assertionslog   (history of sleep assertions)
+
+STEP 5 — Set power management options
+  [CLI] sudo pmset -a sleep 15          (sleep after 15 min, all power sources)
+  [CLI] sudo pmset -b sleep 10          (-b = battery only)
+  [CLI] sudo pmset -c sleep 30          (-c = AC power only)
+  [CLI] sudo pmset -a hibernatemode 3   (3 = safe sleep; 0 = no hibernate;
+                                         25 = hibernate always)
+  [CLI] sudo pmset -a autopoweroff 1    (enable autopoweroff after long sleep)
+
+STEP 6 — Diagnose wake reasons
+  [CLI] pmset -g log | grep -i "wake reason" | tail -20
+  Common wake reasons:
+    RTC           : Scheduled wake (Calendar, backup)
+    USB           : USB device woke system
+    SMC.darkwake  : Background maintenance task
+    EC.LidOpen    : Lid opened
+
+STEP 7 — Fix machine that won't sleep
+  [CLI] pmset -g assertions | grep -v " 0"
+  Find app holding assertion. Quit it, or:
+  [CLI] sudo pmset sleepnow   (force sleep immediately)
+
+STEP 8 — Reset SMC for charging / power issues (Intel)
+  See Section 1 — SMC Reset.
+  Symptoms warranting SMC reset: battery not charging, incorrect percentage,
+  not recognising charger, fans always at full speed.
+
+STEP 9 — Calibrate battery estimate (cosmetic, not required for modern Macs)
+  Drain to 0%, charge uninterrupted to 100%. Repeat once.
+  Note: Apple no longer recommends calibration for lithium batteries.
+
+================================================================================
+18. MDM TROUBLESHOOTING (JAMF / MOSYLE)
+================================================================================
+
+STEP 1 — Check enrollment status
+  [CLI] profiles status -type enrollment
+  Expected: "Enrolled via DEP: Yes" and "MDM enrollment: Yes (User Approved)"
+  "User Approved: No" = user has not approved MDM in System Settings.
+  Fix: System Settings > Privacy & Security > Profiles > Approve.
+
+STEP 2 — List installed MDM profiles
+  [CLI] profiles list -all
+  [GUI] System Settings > Privacy & Security > Profiles.
+  Unexpected profiles or missing required profiles indicate sync issue.
+
+STEP 3 — Force MDM check-in (pull policies / profiles from server)
+  Use the MDM console's documented blank-push/check-in workflow. The command
+  'profiles renew -type enrollment' re-enables Automated Device Enrollment
+  notification attempts; it is not a generic policy check-in.
+  Jamf-specific:
+  [CLI] sudo jamf policy                        (run all triggered policies)
+  [CLI] sudo jamf manage                        (re-apply management framework)
+  [CLI] sudo jamf recon                         (submit inventory update)
+
+STEP 4 — Check Jamf binary and framework
+  [CLI] sudo jamf version
+  [CLI] ls /usr/local/bin/jamf
+  [CLI] ls /Library/Application\ Support/JAMF/
+  Missing = framework removed. Re-enroll or push QuickAdd package from Jamf.
+
+STEP 5 — Re-enroll a machine (Jamf)
+  Option A (DEP / ADE): Erase and re-provision (Section 22 or 23).
+  Option B (manual): Download enrollment URL or QuickAdd.pkg from Jamf Pro >
+    Computers > Enrollment Invitations. Run package.
+
+STEP 6 — Check MDM log for errors
+  [CLI] log show --predicate 'subsystem == "com.apple.ManagedClient"' \
+        --last 2h --style compact
+  [CLI] log show --predicate 'process == "mdmclient"' --last 2h
+
+STEP 7 — Re-push MDM command queue (from Jamf console)
+  Jamf Pro > Computers > select computer > Management > Send Blank Push.
+  This wakes the MDM daemon and causes it to pull pending commands.
+
+STEP 8 — Remove MDM enrollment (supervised device — requires MDM server action)
+  From Jamf Pro: Computers > select computer > Management > Wipe/Unenroll.
+  Local removal (user-approved enrollment, not supervised):
+  [GUI] System Settings > Privacy & Security > Profiles > select MDM profile >
+        click - (Remove). Requires admin password.
+  [DESTRUCTIVE] Do not run a remove-all profiles command. Removing enrollment can
+  also remove managed settings and apps. Use the MDM server's authorized unenroll
+  workflow and record ownership, Activation Lock, escrow, and recovery impacts.
+
+STEP 9 — Check for conflicting MDM enrollment (two MDMs)
+  [CLI] profiles list -all | grep "attribute"
+  Multiple PayloadUUID entries from different organisations = conflict.
+  Remove all and re-enrol to single MDM.
+
+================================================================================
+19. CERTIFICATES & PKI
+================================================================================
+
+STEP 1 — List certificates in a keychain
+  [CLI] security find-certificate -a -p /Library/Keychains/System.keychain \
+        | openssl x509 -noout -subject -dates
+  [CLI] security find-certificate -a ~/Library/Keychains/login.keychain-db
+
+STEP 2 — Install a CA certificate to System keychain (trust all users)
+  [CLI] sudo security add-trusted-cert -d -r trustRoot \
+        -k /Library/Keychains/System.keychain /path/to/ca.crt
+  Confirm:
+  [CLI] security verify-cert -c /path/to/ca.crt
+
+STEP 3 — Install a certificate via MDM / profile
+  Preferred enterprise method. Deliver the certificate through the approved MDM
+  payload. For manual enrollment, use the supported System Settings workflow;
+  do not rely on obsolete command-line profile installation syntax.
+
+STEP 4 — Verify a certificate chain
+  [CLI] openssl verify -CAfile /path/to/ca-bundle.crt /path/to/server.crt
+  "OK" = chain is valid. Errors indicate missing intermediate or expired cert.
+
+STEP 5 — Check certificate expiry
+  [CLI] openssl x509 -in /path/to/cert.crt -noout -dates
+  [CLI] security find-certificate -c "<Common Name>" -p \
+        | openssl x509 -noout -dates
+
+STEP 6 — Remove an expired or untrusted certificate
+  [GUI] Keychain Access.app > select certificate > Delete.
+  [DESTRUCTIVE][CLI] sudo security delete-certificate -c "<Common Name>" \
+        /Library/Keychains/System.keychain
+
+STEP 7 — Export a certificate (for sharing or backup)
+  [GUI] Keychain Access > select cert > File > Export.
+        Choose .cer (public only) or .p12 (with private key).
+  [CLI] security export -k /Library/Keychains/System.keychain \
+        -t certs -f pemseq -o /tmp/certs.pem
+
+STEP 8 — Diagnose TLS/SSL errors in apps
+  [CLI] openssl s_client -connect <hostname>:443
+  Look for "Verify return code: 0 (ok)". Non-zero = cert issue.
+  Common codes:
+    19 = self-signed cert
+    20 = unable to get local issuer certificate (missing CA in trust store)
+    21 = unable to verify first certificate
+
+STEP 9 — Repair Keychain (corrupt keychain causes repeated password prompts)
+  [CLI] security unlock-keychain ~/Library/Keychains/login.keychain-db
+  Rebuilding a login keychain can permanently disconnect stored passwords,
+  certificates, identities, and app secrets. Treat it as a last-resort identity
+  change requiring user approval, a backup/export plan, and escalation.
+
+================================================================================
+20. VPN CLIENT TROUBLESHOOTING
+================================================================================
+
+STEP 1 — Check native VPN status (IKEv2 / L2TP / Cisco IPSec)
+  [GUI] System Settings > VPN.
+  [CLI] scutil --nc list           (list all VPN / network configurations)
+  [CLI] scutil --nc status "VPNName"
+
+STEP 2 — Connect / disconnect native VPN from CLI
+  [CLI] scutil --nc start  "VPNName"
+  [CLI] scutil --nc stop   "VPNName"
+
+STEP 3 — Check VPN routing (split vs. full tunnel)
+  After connecting:
+  [CLI] netstat -rn
+  Full tunnel: default route (0.0.0.0) points to VPN interface (utun0/1).
+  Split tunnel: only specific subnets route through VPN.
+  [CLI] ifconfig utun0            (VPN tunnel interface)
+
+STEP 4 — Flush DNS after VPN connects (stale DNS causes name resolution fails)
+  [CLI] sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+
+STEP 5 — Check VPN credentials in Keychain
+  [GUI] Keychain Access > search for VPN server hostname or "VPN".
+        Delete and re-enter credentials if stale.
+
+STEP 6 — Collect VPN log (native macOS VPN)
+  [CLI] log show --predicate 'subsystem contains "com.apple.networkextension"' \
+        --last 30m --style compact
+  [CLI] log show --predicate 'process == "nesessionmanager"' --last 30m
+
+STEP 7 — Third-party VPN clients (Cisco AnyConnect, GlobalProtect, etc.)
+  Cisco AnyConnect log:
+  [CLI] cat /var/log/cisco/dart/logs/dart.log
+        Or run DART (Diagnostic and Reporting Tool) bundled with AnyConnect.
+  GlobalProtect log:
+  [CLI] cat ~/Library/Logs/PaloAltoNetworks/GlobalProtect/PanGPS.log
+
+STEP 8 — VPN connects but no traffic passes
+  a) DNS leak: [CLI] nslookup google.com    — check which server responds.
+  b) MTU mismatch:
+     [CLI] ping -s 1400 -c 4 8.8.8.8       — if this fails but smaller sizes
+                                               work, MTU is the issue.
+     Fix: [CLI] sudo ifconfig utun0 mtu 1300
+  c) Routing conflict: see Step 3. Static route may be needed.
+     [CLI] sudo route add -net 10.0.0.0/8 -interface utun0
+  [CHANGE] Interface and route changes are temporary diagnostics only. Record the
+  original state and remove the test change immediately; prefer correcting the
+  VPN profile centrally.
+
+STEP 9 — Remove and recreate native VPN config
+  [GUI] System Settings > VPN > select config > (i) > Delete VPN.
+  Recreate from scratch or re-push via MDM profile.
+
+================================================================================
+21. ROSETTA 2 & APPLE SILICON COMPATIBILITY
+================================================================================
+
+STEP 1 — Check if Rosetta 2 is installed
+  [CLI] /usr/bin/pgrep -q oahd && echo "Rosetta installed" || \
+        echo "Rosetta NOT installed"
+  [CLI] ls /Library/Apple/usr/libexec/oah/
+
+STEP 2 — Install Rosetta 2
+  [CLI] softwareupdate --install-rosetta --agree-to-license
+  Or: launch any x86_64 app — macOS prompts automatically.
+
+STEP 3 — Determine architecture of a binary
+  [CLI] file /Applications/<AppName>.app/Contents/MacOS/<binary>
+  "Mach-O universal binary"  = Universal (runs natively on both)
+  "Mach-O 64-bit executable arm64"    = Native Apple Silicon
+  "Mach-O 64-bit executable x86_64"  = Intel only, requires Rosetta
+
+STEP 4 — Force an app to run under Rosetta (for compatibility)
+  [GUI] Finder > right-click app > Get Info > check "Open using Rosetta."
+  [CLI] arch -x86_64 /Applications/<AppName>.app/Contents/MacOS/<binary>
+
+STEP 5 — Force an app to run natively (remove Rosetta override)
+  [GUI] Finder > Get Info > uncheck "Open using Rosetta."
+
+STEP 6 — Run a shell or command under a specific architecture
+  [CLI] arch -arm64  <command>    (native Apple Silicon)
+  [CLI] arch -x86_64 <command>    (Rosetta / Intel emulation)
+  Example: arch -x86_64 /bin/zsh   (open x86_64 shell session)
+
+STEP 7 — Check if a process is running under Rosetta
+  [GUI] Activity Monitor > Kind column.
+        "Intel" = running under Rosetta. "Apple" = native.
+  [CLI] ps aux | grep <appname>    (then:)
+  [CLI] sysctl -n sysctl.proc_translated   (1 = running under Rosetta,
+        must be run from within that process's context)
+
+STEP 8 — Kernel extension compatibility
+  Legacy kexts can run on Apple Silicon only under additional approval and
+  Reduced Security conditions. Apple recommends modern DriverKit, Endpoint
+  Security, and Network Extension alternatives. Do not reduce startup security
+  without security-owner approval and current vendor/Apple documentation.
+
+STEP 9 — Terminal architecture (for developer / IT script issues)
+  Default Terminal on Apple Silicon runs arm64.
+  To open an x86_64 Terminal session:
+  [CLI] arch -x86_64 /bin/zsh
+  Or: duplicate Terminal.app, name it "Terminal (Rosetta)", open its Get Info,
+      check "Open using Rosetta."
+
+================================================================================
+22. ERASE ALL CONTENT AND SETTINGS
+================================================================================
+
+NOTE: Available on macOS Monterey (12.0.1)+ and requires Apple T2 or
+Apple Silicon chip. Data is permanently destroyed. Confirm backup first.
+
+STEP 1 — Initiate Erase All Content and Settings
+  [GUI] System Settings > General > Transfer or Reset >
+        Erase All Content and Settings.
+  Enter admin password. Follow prompts.
+  The Mac will:
+    1. Unenroll from MDM (if user-approved)
+    2. Sign out of iCloud / Apple ID
+    3. Erase and re-seal the system volume
+    4. Restart to Setup Assistant
+  [DESTRUCTIVE] Before confirmation, verify asset identity, ownership, current
+  backup/restore requirements, Activation Lock, bootstrap-token/MDM status, and
+  written authorization. Do not infer that every enrollment will be removed.
+
+STEP 2 — What gets erased
+  All user data, apps, settings, keychains, FileVault keys, local snapshots.
+  The sealed macOS system volume is restored from the cryptex (built-in).
+  No internet required — base OS is on-chip or in the System volume.
+
+STEP 3 — What does NOT get erased
+  Firmware (iBoot). NVRAM on Apple Silicon (auto-reset on next boot).
+  Hardware serial number, SID, AppleCare registration.
+
+STEP 4 — Re-enroll into MDM after erase
+  If machine is in Apple Business/School Manager (ABM/ASM) and assigned to
+  your MDM server, it will automatically prompt for MDM enrollment at
+  Setup Assistant.
+  If not assigned: manually enrol via QuickAdd package or enrolment URL.
+
+STEP 5 — Erase from MDM (remote wipe)
+  Jamf Pro: Computers > select computer > Management > Wipe Computer.
+  Sends MDM "EraseDevice" command. Machine erases and re-enters Setup Assistant.
+  Availability and fallback behavior depend on model, bootstrap token, startup
+  volume, signed-system-volume state, and security settings. Run the MDM EACS
+  preflight when available and choose an explicit no-obliteration policy unless
+  full erase/reinstall is authorized.
+
+STEP 6 — Erase from Recovery Mode (if machine is unresponsive or MDM unavailable)
+  [BOOT] Boot Recovery Mode (Section 1).
+  [BOOT][GUI] Disk Utility > select Macintosh HD > Erase.
+  Then: Reinstall macOS from Recovery > Reinstall macOS.
+
+================================================================================
+23. APPLE CONFIGURATOR 2 & DFU RESTORE
+================================================================================
+
+NOTE: Required when a Mac will not boot to Recovery Mode, or firmware is
+corrupted. Apple Configurator 2 is free on the Mac App Store. A second Mac
+running Configurator is needed as the host.
+
+STEP 1 — Install Apple Configurator 2
+  [GUI] App Store > search "Apple Configurator 2" > Install.
+
+STEP 2 — Put target Mac into DFU mode
+  Do not use a memorized generic key sequence: the DFU port and timing vary by
+  model. Identify the exact Mac, then follow Apple's current model-specific
+  procedure immediately before starting:
+  https://support.apple.com/108900
+
+STEP 3 — Revive (restore firmware without erasing user data)
+  [GUI] In Apple Configurator 2 > right-click DFU device > Revive Device.
+  Use when: Mac is stuck in a boot loop, firmware update failed, black screen
+  after update. Data is preserved.
+
+STEP 4 — Restore (full erase + firmware reinstall)
+  [GUI] In Apple Configurator 2 > right-click DFU device > Restore Device.
+  Downloads and installs latest macOS. All data erased.
+  Use when: Revive fails, or you need a clean wipe.
+
+STEP 5 — After restore
+  Machine boots to Setup Assistant. Re-enrol in MDM (Section 18, Step 5) or
+  set up manually. Restore data from Time Machine or backup.
+
+================================================================================
+24. REMOTE SUPPORT — SCREEN SHARING & APPLE REMOTE DESKTOP
+================================================================================
+
+STEP 1 — Enable Screen Sharing (GUI, on target Mac)
+  [GUI] System Settings > General > Sharing > Screen Sharing > On.
+  Note the VNC address shown (vnc://x.x.x.x).
+
+STEP 2 — Enable Screen Sharing from CLI (for locked-out machines)
+  Use MDM or the approved remote-support configuration. Do not directly load an
+  Apple launch daemon as a substitute for configuring authorization and access.
+
+STEP 3 — Connect to remote Mac via Screen Sharing
+  [GUI] Finder > Go > Connect to Server > vnc://<ip-or-hostname>
+  Or: open vnc://<ip>  in Safari / Spotlight.
+  Or: use the "Screen Sharing.app" in /System/Library/CoreServices/.
+
+STEP 4 — Enable Apple Remote Desktop (ARD) access
+  [GUI] System Settings > General > Sharing > Remote Management > On.
+        Click Options — grant privileges (observe, control, send files, etc.).
+  [CHANGE] Configure named users and least-privilege rights with MDM or the
+  approved ARD workflow. Do not enable legacy VNC, grant all privileges, or place
+  a VNC password in a command argument.
+
+STEP 5 — Send ARD command to a fleet (requires Apple Remote Desktop app)
+  Apple Remote Desktop (paid, App Store) can:
+    - Push packages, scripts, reports across managed Macs.
+    - Run Unix commands on selected machines.
+    - Lock / restart / sleep remote machines.
+
+STEP 6 — Use SSH for remote admin when screen sharing is not needed
+  See Section 25 — Remote Login (SSH).
+
+STEP 7 — Check if Screen Sharing is currently active
+  [CLI] sudo launchctl list com.apple.screensharing
+  PID column populated = daemon is running and accepting connections.
+
+STEP 8 — Disable Screen Sharing when done (security hygiene)
+  [CHANGE] Disable it through System Settings or the same MDM policy used to
+  enable it, then verify the listener and authorized-user state.
+
+================================================================================
+25. REMOTE LOGIN — SSH
+================================================================================
+
+ENABLING & DISABLING
+----------
+
+STEP 1 — Enable SSH (Remote Login) on target Mac
+  [GUI] System Settings > General > Sharing > Remote Login > On.
+        Add users who are allowed to connect.
+  [CLI] sudo systemsetup -setremotelogin on
+  Verify:
+  [CLI] sudo systemsetup -getremotelogin
+
+STEP 2 — Disable SSH
+  [GUI] System Settings > General > Sharing > Remote Login > Off.
+  [CLI] sudo systemsetup -setremotelogin off
+
+STEP 3 — Control which users can SSH in
+  [GUI] System Settings > Sharing > Remote Login > Allow access for:
+        "All users" or "Only these users."
+  [CLI] sudo dseditgroup -o edit -a <username> -t user com.apple.access-ssh
+
+STEP 4 — Check sshd is running
+  [CLI] sudo launchctl list com.openssh.sshd
+  PID present = accepting connections.
+  [CLI] sudo lsof -i :22         (confirms port 22 is listening)
+  [CLI] nc -zv localhost 22      (from local machine)
+
+---
+
+CONNECTING
+----------
+
+STEP 5 — Connect to a remote Mac
+  [CLI] ssh <username>@<hostname-or-ip>
+  [CLI] ssh -p 22 <username>@<hostname>          (explicit port)
+  [CLI] ssh -i ~/.ssh/id_rsa <username>@<host>   (key-based auth)
+
+STEP 6 — Copy files via SSH
+  [CLI] scp /local/file.txt user@host:/remote/path/
+  [CLI] scp user@host:/remote/file.txt /local/path/
+  [CLI] rsync -avz /local/dir/ user@host:/remote/dir/
+
+STEP 7 — SSH tunnelling (port forwarding)
+  Local forward (access remote service locally):
+  [CLI] ssh -L 8080:localhost:80 user@host
+        (browse http://localhost:8080 to reach remote port 80)
+  Remote forward (expose local service through remote host):
+  [CLI] ssh -R 9090:localhost:3000 user@host
+  SOCKS proxy:
+  [CLI] ssh -D 1080 user@host
+
+---
+
+KEY-BASED AUTHENTICATION
+----------
+
+STEP 8 — Generate SSH key pair (on client Mac)
+  [CLI] ssh-keygen -t ed25519 -C "helpdesk@domain.com"
+  Keys created: ~/.ssh/id_ed25519 (private), ~/.ssh/id_ed25519.pub (public).
+
+STEP 9 — Copy public key to remote Mac
+  [CLI] ssh-copy-id user@host
+  Or manually:
+  [CLI] cat ~/.ssh/id_ed25519.pub | ssh user@host \
+        "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && \
+         chmod 600 ~/.ssh/authorized_keys"
+
+STEP 10 — Set correct permissions on SSH files
+  [CLI] chmod 700 ~/.ssh
+  [CLI] chmod 600 ~/.ssh/id_ed25519
+  [CLI] chmod 644 ~/.ssh/id_ed25519.pub
+  [CLI] chmod 600 ~/.ssh/authorized_keys
+  Wrong permissions = SSH silently ignores the key.
+
+---
+
+TROUBLESHOOTING
+----------
+
+STEP 11 — Connection refused (port 22)
+  a) SSH not enabled on target: Enable it (Steps 1–4).
+  b) Firewall blocking port 22:
+     [CLI] sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+     [GUI] System Settings > Network > Firewall > Options — ensure sshd
+           (Remote Login) is listed and set to "Allow incoming."
+  c) Target is on a different subnet or VPN required: confirm routing.
+
+STEP 12 — Authentication failure (password rejected)
+  a) Confirm username and password. Check Caps Lock.
+  b) Check if password auth is disabled in sshd_config:
+     [CLI] grep PasswordAuthentication /etc/ssh/sshd_config
+     If "no": only key-based auth is allowed.
+  c) Check user is in the allowed list (Step 3).
+  d) Verbose output for diagnosis:
+     [CLI] ssh -vvv user@host   (shows each auth step attempted)
+
+STEP 13 — Key-based auth not working
+  a) Check permissions (Step 10) — SSH will not use keys with loose permissions.
+  b) Verify public key is in remote ~/.ssh/authorized_keys exactly (no line wraps).
+  c) On remote Mac, check the effective sshd configuration and any included files:
+     [CLI] grep -E "PubkeyAuth|AuthorizedKeys" /etc/ssh/sshd_config
+     "PubkeyAuthentication yes" must be present (or absent = default yes).
+  d) Confirm ownership, mode, ACLs, FileVault home availability, and endpoint
+     security policy. macOS does not use SELinux.
+
+STEP 14 — Connection drops / timeouts
+  Add to ~/.ssh/config on client:
+    Host *
+      ServerAliveInterval 60
+      ServerAliveCountMax 3
+  This sends a keepalive every 60 sec, preventing idle disconnects.
+
+STEP 15 — Harden sshd on managed Macs (baseline config)
+  Edit /etc/ssh/sshd_config (requires sudo):
+    PermitRootLogin no
+    PasswordAuthentication no         (key-based only)
+    ChallengeResponseAuthentication no
+    UsePAM yes
+    AllowUsers <user1> <user2>
+    MaxAuthTries 5
+    LoginGraceTime 30
+  Apply changes:
+  [CLI] sudo launchctl kickstart -k system/com.openssh.sshd
+
+STEP 16 — View SSH login history
+  [CLI] last -n 20                    (recent logins)
+  [CLI] log show --predicate 'process == "sshd"' --last 24h --style compact
+  [CLI] grep "Accepted\|Failed" /var/log/system.log   (macOS 12 and earlier)
+
+STEP 17 — Remove a known host (host key changed warning)
+  [CLI] ssh-keygen -R <hostname-or-ip>
+  Removes stale entry from ~/.ssh/known_hosts. Reconnect and accept new key.
+
+================================================================================
+26. TIME MACHINE TROUBLESHOOTING
+================================================================================
+
+STEP 1 — Check Time Machine status
+  [CLI] tmutil status
+  Look for "Running": 1 (backup in progress), "BackupPhase" (current phase).
+  [CLI] tmutil latestbackup      (path to most recent backup)
+  [CLI] tmutil listbackups       (all backup dates)
+
+STEP 2 — Check backup log for errors
+  [CLI] log show --predicate 'subsystem == "com.apple.TimeMachine"' \
+        --last 24h --style compact | grep -i "error\|fail\|warn"
+
+STEP 3 — Start / stop a backup manually
+  [CLI] tmutil startbackup --auto --rotation --destination <DestID>
+  [CLI] tmutil stopbackup
+
+STEP 4 — Get destination IDs
+  [CLI] tmutil destinationinfo
+  Lists all configured destinations with DestinationID (UUID).
+
+STEP 5 — Add or remove a backup destination
+  [CLI] sudo tmutil addDestination <path-or-url>
+  [CLI] sudo tmutil removeDestination <DestinationID>
+
+STEP 6 — Diagnose "backup disk not available" (network destinations)
+  a) Ping the NAS / Time Capsule / server.
+  b) [CLI] mount | grep backup   (check if share is mounted)
+  c) [GUI] Finder > Go > Connect to Server > connect to share manually.
+  d) Delete Time Machine keychain entry and re-connect:
+     [GUI] Keychain Access > search for NAS hostname > delete entry.
+
+STEP 7 — Resolve backup stuck "Preparing"
+  [CLI] tmutil stopbackup
+  Verify destination health, free space, exclusions, network stability, and Time
+  Machine logs, then restart the Mac and retry. Do not change undocumented kernel
+  throttling controls; escalate persistent preparation failures.
+
+STEP 8 — Exclude large folders to speed up backups
+  [CLI] tmutil addexclusion /path/to/folder
+  [CLI] tmutil isexcluded /path/to/folder
+  [CLI] tmutil removeexclusion /path/to/folder
+  Common exclusions: VMs, Docker images, ~/Downloads, node_modules.
+  [CHANGE] An exclusion creates a recovery gap. Obtain data-owner approval and
+  document an alternative backup for anything that cannot be recreated.
+
+STEP 9 — Repair a corrupted sparse bundle (network backup)
+  Connect to NAS. Open Disk Utility. Select the .sparsebundle > First Aid.
+  If that fails:
+  [CLI] hdiutil attach /Volumes/<NAS>/<machine>.sparsebundle -nomount
+  [CLI] diskutil repairVolume /dev/disk<N>
+
+STEP 10 — Restore a file or folder from Time Machine
+  [GUI] With Time Machine backup drive attached, click Time Machine in menu bar
+        > Enter Time Machine. Navigate to date and restore.
+  [CLI] tmutil restore /Volumes/Backups.backupdb/<Mac>/<Date>/Macintosh\ HD/
+        path/to/file /restore/destination/
+
+STEP 11 — Restore entire system from Time Machine
+  [BOOT] Boot Recovery Mode (Section 1).
+  [BOOT][GUI] Restore from Time Machine > select backup disk > select date.
+
+STEP 12 — List and delete local snapshots to reclaim disk space
+  [CLI] tmutil listlocalsnapshots /
+  [CLI] tmutil deletelocalsnapshots <YYYY-MM-DD-HHMMSS>
+  [CHANGE] Delete only a verified snapshot when space pressure justifies it.
+  Do not use a bulk loop; macOS normally manages local snapshot reclamation.
+
+================================================================================
+27. CANONICAL DIAGNOSTIC COLLECTOR
+================================================================================
+
+Overview:
+  macos-workstation-diagnostic.zsh is the canonical collector. It writes a
+  private report folder, summary, detailed evidence, JSON/TSV integration data,
+  integrity manifest, and ZIP archive. It does not repair or change system
+  settings. External tests run only with --network-test.
+
+  macos-remote-diag.sh is retired and must not be used for active support.
+  macos_security_check.sh is a compatibility launcher for the canonical
+  --security profile.
+
+--------------------------------------------------------------------------------
+LOCAL COLLECTION
+--------------------------------------------------------------------------------
+
+STEP 1 — Standard private collection
+  [CLI] ./macos-workstation-diagnostic.zsh --output "$HOME/Desktop"
+  Start with summary.txt; use report.txt for supporting evidence.
+
+STEP 2 — Choose the minimum relevant profile
+  [CLI] ./macos-workstation-diagnostic.zsh --performance
+  [CLI] ./macos-workstation-diagnostic.zsh --network
+  [CLI] ./macos-workstation-diagnostic.zsh --battery
+  [CLI] ./macos-workstation-diagnostic.zsh --storage
+  [CLI] ./macos-workstation-diagnostic.zsh --login
+  [CLI] ./macos-workstation-diagnostic.zsh --security
+  [CLI] ./macos-workstation-diagnostic.zsh --application "App Name"
+
+  --include-logs adds capped recent logs and may disclose sensitive context.
+  --verify-volume is slower but read-only.
+  --network-test generates external traffic and checks available updates.
+
+--------------------------------------------------------------------------------
+REMOTE COLLECTION
+--------------------------------------------------------------------------------
+
+STEP 1 — Confirm authorization, user presence/impact, SSH access, redaction level,
+  destination, retention, and whether logs or external tests are approved.
+
+STEP 2 — Copy the reviewed canonical collector to an approved private temporary
+  location on the remote Mac. Do not stream an unreviewed script directly into
+  a privileged shell.
+
+STEP 3 — Run it without sudo first, with an explicit output directory and the
+  minimum profile needed. Use vendor redaction unless internal identifiers are
+  required and authorized.
+
+  [CLI] zsh /approved/path/macos-workstation-diagnostic.zsh \
+        --output "$HOME/Desktop" --redaction vendor --network
+
+STEP 4 — Read the result code and collector-errors.txt. A missing value is not
+  evidence of a healthy state. Re-run with administrator access only when the
+  specific missing evidence is necessary and approved.
+
+STEP 5 — Securely retrieve the exact ZIP path printed by the collector. Review
+  summary.txt, report.txt, logs, process names, app names, and filenames before
+  attaching anything to a ticket or sending it outside the organization.
+
+STEP 6 — Remove the temporary script and remote report under the approved
+  retention/change procedure after successful retrieval.
+
+--------------------------------------------------------------------------------
+RESULT CODES
+--------------------------------------------------------------------------------
+
+  0 = no warning or critical threshold detected
+  1 = one or more warnings
+  2 = one or more critical findings
+  3 = a required collector or requested configuration check was incomplete
+
+  Findings are leads, not diagnoses. The collector does not declare regulatory
+  compliance and its result code is not a device-trust decision.
+
+--------------------------------------------------------------------------------
+NIST-ALIGNED PREFLIGHT
+--------------------------------------------------------------------------------
+
+  macos-nist-check.sh is an endpoint posture preflight, not a certification or
+  compliance score. It reports PASS, FAIL, WARN, UNKNOWN, and INFO signals and
+  returns a non-zero result for findings or incomplete evidence.
+
+  [CLI] sudo bash macos-nist-check.sh --minimum-major <approved-major>
+  [CLI] sudo bash macos-nist-check.sh --check-updates
+
+  Live update discovery contacts Apple. Identifiers are omitted unless
+  --include-identifiers is supplied. For auditable, version-specific controls,
+  use an organization-tailored baseline generated by the NIST macOS Security
+  Compliance Project: https://pages.nist.gov/macos_security/
+
+================================================================================
+28. PREVENTIVE MAINTENANCE CHECKLIST
+================================================================================
+
+Apply fleet policy through MDM/RMM where possible. Maintenance must be evidence-
+driven; do not schedule blanket repair, deletion, reindex, key rotation, or wipe
+operations merely because a calendar interval elapsed.
+
+WEEKLY (automated / fleet reporting)
+  [ ] Review backup success and restore-readiness exceptions.
+  [ ] Review critical security/update/endpoint-health alerts and failed MDM commands.
+  [ ] Triage recurring crashes or panics; retain evidence according to policy.
+
+MONTHLY
+  [ ] Review update compliance against the approved deferral/deadline policy;
+      schedule restarts with user and business-impact controls.
+  [ ] Review storage-capacity, battery-health, FileVault, SIP, Gatekeeper, firewall,
+      MDM, and endpoint-agent exceptions from fleet data.
+  [ ] Review unauthorized persistence, listeners, extensions, and local admins.
+  [ ] Retain or purge diagnostic reports only under the approved retention policy.
+
+QUARTERLY
+  [ ] Test representative backup restores and record evidence.
+  [ ] Review stale accounts through the identity offboarding process; confirm data,
+      Secure Token, FileVault, and legal-retention requirements before removal.
+  [ ] Review vulnerable and unsupported software through approved inventory data.
+  [ ] Validate the current OS-specific security baseline and documented exemptions.
+  [ ] Review privacy / TCC permissions for managed apps (Section 9, Step 8).
+  [ ] Audit SSH keys and remote access (Section 9, Steps 7–8).
+
+ANNUALLY
+  [ ] Review hardware supportability, warranty, performance, and replacement plans.
+  [ ] Review MDM enrollment, profiles, certificates, bootstrap-token health, and
+      recovery-key escrow using the management platform.
+  [ ] Exercise incident, remote-support, lost-device, erase, and recovery procedures
+      on test assets—not production user devices.
+  [ ] Revalidate this runbook against current Apple, NIST mSCP, vendor, and
+      organizational guidance; record owner, date, version, and changes.
+
+================================================================================
+NATIVE TOOL QUICK REFERENCE
+================================================================================
+
+TOOL                    PATH / LAUNCH                     PURPOSE
+----------------------  --------------------------------  ---------------------
+Activity Monitor        /Applications/Utilities/          CPU, RAM, Disk, Net
+Console.app             /Applications/Utilities/          Logs, crash reports
+Disk Utility            /Applications/Utilities/          Partition, repair
+Keychain Access         /Applications/Utilities/          Credential management
+System Information      Apple menu > About > System Rpt   Hardware inventory
+Wireless Diagnostics    Cmd+Space, "Wireless Diag"        Wi-Fi analysis
+Bluetooth Explorer      Xcode Dev Tools (optional)        BT low-level debug
+Directory Utility       /System/Library/CoreServices/     AD/LDAP binding GUI
+Migration Assistant     /Applications/Utilities/          Data migration
+Apple Configurator 2    App Store (free)                  Device provisioning
+
+CLI TOOLS (native unless explicitly marked otherwise)
+top                     Process monitor
+vm_stat                 Virtual memory statistics
+iostat                  Disk I/O statistics
+netstat, lsof, nettop   Network connections / bandwidth
+diskutil                Disk partitioning and repair
+tmutil                  Time Machine management
+fdesetup                FileVault management
+csrutil                 SIP management (Recovery only)
+dscl, dsconfigad        Directory Services / AD binding
+launchctl               Service / daemon management
+log, Console            Unified logging system
+system_profiler         Hardware/software inventory
+sysdiagnose             Full system diagnostic archive
+spctl                   Gatekeeper / code signing
+codesign                App signature verification
+security                Keychain and certificate CLI
+openssl                 Certificate inspection and TLS testing
+pmset                   Power management / battery diagnostics
+ioreg                   Hardware register tree (battery, USB power)
+profiles                MDM profile management
+jamf                    Jamf Pro management framework CLI (vendor-installed)
+lpadmin, lpstat, lpr    CUPS printing management
+scutil                  Network / VPN configuration and status
+ssh, scp, rsync         Remote access and file transfer
+ssh-keygen              SSH key generation and known_hosts mgmt
+arch                    Run command under specific CPU architecture
+file                    Identify binary architecture (arm64 / x86_64)
+softwareupdate          OS and Rosetta 2 updates
+defaults                Read/write preference (plist) keys
+plutil                  Validate and convert plists
+killall coreaudiod      Restart Core Audio daemon
+
+================================================================================
+Document owner: IT Operations | Controlled internal support procedure
+================================================================================

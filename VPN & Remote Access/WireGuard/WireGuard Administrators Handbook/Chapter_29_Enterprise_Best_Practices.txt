@@ -1,0 +1,194 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 29 ENTERPRISE BEST
+PRACTICES
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter consolidates architectural, operational, and governance
+practices that have proven effective for long-term WireGuard deployments
+in enterprise environments.
+
+===============================================================================
+2. ARCHITECTURE STANDARDS
+===============================================================================
+
+Recommendations
+
+-   Prefer hub-and-spoke unless a mesh is justified.
+-   Keep management traffic separate from user traffic.
+-   Use dedicated management VLANs.
+-   Design with future growth in mind.
+-   Eliminate single points of failure.
+
+Architecture should be documented before implementation.
+
+===============================================================================
+3. IP ADDRESS MANAGEMENT
+===============================================================================
+
+Maintain a documented allocation plan.
+
+Example
+
+VPN Infrastructure 10.100.0.0/24 Management 10.60.40.0/24 Servers
+10.60.10.0/24 Storage 10.60.30.0/24 Backups 10.60.50.0/24
+
+Never assign duplicate VPN addresses.
+
+===============================================================================
+4. NAMING STANDARDS
+===============================================================================
+
+Gateways
+
+wg-hq-01 wg-dr-01
+
+Branches
+
+wg-branch-a wg-branch-b
+
+Clients
+
+alice-laptop bob-macbook ops-workstation
+
+Names should identify purpose and location.
+
+===============================================================================
+5. CHANGE MANAGEMENT
+===============================================================================
+
+Every production change should include:
+
+-   Change request number
+-   Implementation plan
+-   Rollback plan
+-   Validation steps
+-   Post-change review
+
+Emergency changes should be documented immediately afterward.
+
+===============================================================================
+6. CONFIGURATION MANAGEMENT
+===============================================================================
+
+Store all configuration in version control.
+
+Recommended
+
+-   Git
+-   Protected branches
+-   Pull requests
+-   Code review
+-   Tagged releases
+
+Never edit production configuration without recording the change.
+
+===============================================================================
+7. DOCUMENTATION
+===============================================================================
+
+Maintain:
+
+-   Network diagrams
+-   VPN addressing
+-   Peer inventory
+-   Firewall rules
+-   Routing tables
+-   DNS design
+-   Recovery procedures
+-   Contact information
+
+Review documentation quarterly.
+
+===============================================================================
+8. ACCESS GOVERNANCE
+===============================================================================
+
+Principles
+
+-   Least privilege
+-   Need to know
+-   Time-limited vendor access
+-   Quarterly access reviews
+-   Immediate removal of departed users
+
+Review AllowedIPs during every access review.
+
+===============================================================================
+9. SECURITY GOVERNANCE
+===============================================================================
+
+Implement
+
+-   Key rotation
+-   Patch management
+-   Vulnerability scanning
+-   Centralized logging
+-   MFA for administrative workflows
+-   Security monitoring
+
+Perform annual security assessments.
+
+===============================================================================
+10. OPERATIONAL MATURITY
+===============================================================================
+
+Level 1 Manual administration
+
+Level 2 Documented procedures
+
+Level 3 Automated deployments
+
+Level 4 Continuous monitoring
+
+Level 5 Automated remediation with change control
+
+Aim to improve maturity over time.
+
+===============================================================================
+11. AUDITING
+===============================================================================
+
+Quarterly
+
+-   Peer inventory
+-   Firewall review
+-   Routing review
+-   Documentation review
+-   Backup verification
+
+Annually
+
+-   Disaster recovery exercise
+-   Security assessment
+-   Capacity planning
+-   Architecture review
+
+===============================================================================
+12. CAPACITY PLANNING
+===============================================================================
+
+Track
+
+-   Concurrent users
+-   Throughput
+-   Peak bandwidth
+-   CPU utilization
+-   Memory utilization
+-   Tunnel growth
+-   Site growth
+
+Upgrade before resource exhaustion occurs.
+
+===============================================================================
+13. ENTERPRISE CHECKLIST
+===============================================================================
+
+[ ] Architecture documented [ ] Address plan maintained [ ] Naming
+standards enforced [ ] Git repository maintained [ ] Change management
+followed [ ] Documentation current [ ] Quarterly audits completed [ ]
+Disaster recovery tested [ ] Capacity reviewed [ ] Security assessment
+completed
+
+END OF CHAPTER 29

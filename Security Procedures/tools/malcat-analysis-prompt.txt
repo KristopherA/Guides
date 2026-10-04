@@ -1,0 +1,32 @@
+You are tasked to analyse a file using Malcat MCP. Your main goal is to decide if the file is malicious or clean. The result of your analysis shall take the form of a textual report.
+
+Analysis workflow
+-----------------
+
+Analysing a file is usually done as follows:
+
+* First, gather some high-level info about the sample, such as any framework or compiler used
+* List virtual and carved files
+* Look at the matching YARA rules, anomalies, constants
+* Look at the most interesting strings.
+* Inspect a couple of interesting functions
+* To complete your analysis, you may follow back the references of the most pertinent strings / constants and analyse the code referencing them
+
+Programs may be like Russian dolls and include several sub-files/resources. If it makes sense, you may analyse said sub-files and apply the same workflow.
+
+Some file types require a specific approach: <omitted>
+
+Report generation
+-----------------
+
+Using this information, write a small report assessing if the file is malicious or not and its main behavior. It shall be formatted as follows:
+
+1. Generic info about the file (type, metadata, frameworks used, interesting notes)
+2. Inferred behavior: explain the main content/goal/behavior of the file
+3. Sub-files: list the sub-files that were pertinent for the analysis and some info about them.
+4. IOCs: any extracted IOCs
+5. Key detections: list all the elements that you think point towards malware
+6. Counter arguments: list the arguments that tell you that the file may be clean, or in the case of malware, list the possible shortcomings of your key detections
+7. Final verdict, with a confidence score.
+
+The report shall have the following headings: Summary, Key detections/IOCs, Evidence, Verdict.

@@ -1,0 +1,141 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 5 CLIENT
+CONFIGURATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter covers deploying WireGuard clients on Windows, macOS,
+Linux, iOS, and Android, with enterprise recommendations for security,
+routing, and operational support.
+
+===============================================================================
+2. STANDARD CLIENT CONFIGURATION
+===============================================================================
+
+[Interface] PrivateKey = CLIENT_PRIVATE_KEY Address = 10.100.0.25/32 DNS
+= 10.60.40.10
+
+[Peer] PublicKey = SERVER_PUBLIC_KEY Endpoint = vpn.example.com:51820
+AllowedIPs = 10.60.10.0/24,10.60.20.0/24 PersistentKeepalive = 25
+
+===============================================================================
+3. PLATFORM DEPLOYMENT
+===============================================================================
+
+Windows - Install the official WireGuard client. - Import configuration
+file. - Activate the tunnel. - Verify “Latest Handshake”.
+
+macOS - Install the official WireGuard app. - Import configuration. -
+Enable tunnel at login if appropriate.
+
+Linux sudo apt install wireguard wireguard-tools sudo wg-quick up wg0
+
+iOS / Android - Import configuration or scan a QR code. - Protect the
+device with a passcode/biometrics. - Enable on-demand VPN only when
+appropriate.
+
+===============================================================================
+4. SPLIT VS FULL TUNNEL
+===============================================================================
+
+Split Tunnel (recommended for IT administration)
+
+AllowedIPs = 10.60.10.0/24,10.60.20.0/24
+
+Full Tunnel
+
+AllowedIPs = 0.0.0.0/0,::/0
+
+Use split tunneling unless policy requires all traffic through the VPN.
+
+===============================================================================
+5. DNS CONFIGURATION
+===============================================================================
+
+Internal DNS
+
+DNS = 10.60.40.10
+
+Validation
+
+dig server01.example.internal nslookup server01.example.internal
+resolvectl status (Linux)
+
+Split DNS is preferred over hairpin NAT for internal services.
+
+===============================================================================
+6. ROAMING AND NAT
+===============================================================================
+
+PersistentKeepalive = 25
+
+Recommended for clients behind: - Home routers - Hotel Wi-Fi - Cellular
+networks - Carrier NAT
+
+WireGuard automatically updates the peer endpoint as the client roams.
+
+===============================================================================
+7. KILL SWITCH CONSIDERATIONS
+===============================================================================
+
+For systems requiring all traffic through the VPN, implement host
+firewall rules that prevent traffic from leaving interfaces other than
+the VPN.
+
+Test thoroughly before deployment to avoid locking yourself out.
+
+===============================================================================
+8. VALIDATION
+===============================================================================
+
+Show tunnel
+
+wg
+
+Routes
+
+ip route
+
+Latest handshake should be recent. Transfer counters should increase
+during traffic.
+
+Connectivity
+
+ping 10.100.0.1 ping 10.60.40.10 ssh admin@10.60.10.20
+
+===============================================================================
+9. COMMON CLIENT PROBLEMS
+===============================================================================
+
+No handshake - Firewall blocking UDP/51820 - Incorrect endpoint - DNS
+failure - Key mismatch
+
+Handshake but no access - Missing AllowedIPs - Missing server route -
+Firewall or ACL - IP forwarding disabled on server
+
+Intermittent connectivity - MTU too high - Missing PersistentKeepalive -
+Unstable Internet connection
+
+===============================================================================
+10. ENTERPRISE DEPLOYMENT STANDARDS
+===============================================================================
+
+-   One configuration per device.
+-   One key pair per device.
+-   Use descriptive names.
+-   Document device ownership.
+-   Remove stale configurations immediately.
+-   Use configuration management where practical.
+-   Protect exported configuration files.
+
+===============================================================================
+11. CLIENT CHECKLIST
+===============================================================================
+
+[ ] Tunnel imports successfully [ ] Latest handshake verified [ ]
+Internal DNS resolves [ ] Required networks reachable [ ] Split tunnel
+verified [ ] Device inventory updated [ ] User instructed on secure
+usage
+
+END OF CHAPTER 5

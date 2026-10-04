@@ -1,0 +1,132 @@
+WireGuard Enterprise Cheat Sheet (Condensed)
+
+This document is a condensed enterprise reference for using WireGuard as
+an IT administration VPN.
+
+Installation
+
+Ubuntu:
+
+    sudo apt update
+    sudo apt install wireguard wireguard-tools
+
+Generate keys:
+
+    wg genkey > private.key
+    wg pubkey < private.key > public.key
+
+Example Server
+
+    [Interface]
+    Address = 10.100.0.1/24
+    ListenPort = 51820
+    PrivateKey = SERVER_PRIVATE_KEY
+    SaveConfig = false
+
+    [Peer]
+    PublicKey = CLIENT_PUBLIC_KEY
+    AllowedIPs = 10.100.0.2/32
+
+Example Client
+
+    [Interface]
+    Address = 10.100.0.2/24
+    PrivateKey = CLIENT_PRIVATE_KEY
+    DNS = 10.60.1.10
+
+    [Peer]
+    PublicKey = SERVER_PUBLIC_KEY
+    Endpoint = vpn.example.com:51820
+    AllowedIPs = 10.60.0.0/16,192.168.0.0/16
+    PersistentKeepalive = 25
+
+Common Commands
+
+    wg
+    wg show
+    wg-quick up wg0
+    wg-quick down wg0
+    systemctl status wg-quick@wg0
+    ip addr
+    ip route
+    ss -lunp | grep 51820
+
+Enable Forwarding
+
+    sysctl -w net.ipv4.ip_forward=1
+    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+    sysctl -p
+
+Common iptables
+
+    iptables -A INPUT -p udp --dport 51820 -j ACCEPT
+    iptables -A INPUT -i wg0 -j ACCEPT
+    iptables -A FORWARD -i wg0 -j ACCEPT
+    iptables -A FORWARD -o wg0 -j ACCEPT
+    iptables -t nat -A POSTROUTING -s 10.100.0.0/24 -o eth0 -j MASQUERADE
+
+Allow specific VLAN:
+
+    iptables -A FORWARD -i wg0 -d 10.60.10.0/24 -j ACCEPT
+
+Limit ports:
+
+    iptables -A FORWARD -i wg0 -p tcp --dport 22 -j ACCEPT
+    iptables -A FORWARD -i wg0 -p tcp --dport 443 -j ACCEPT
+    iptables -A FORWARD -i wg0 -p tcp --dport 3389 -j ACCEPT
+
+nftables
+
+    nft add rule inet filter input udp dport 51820 accept
+    nft add rule inet filter forward iif wg0 accept
+    nft add rule ip nat postrouting oif eth0 masquerade
+
+Policy Routing
+
+    echo "200 wireguard" >> /etc/iproute2/rt_tables
+    ip route add default via 10.60.1.1 dev ens18 table wireguard
+    ip rule add from 10.100.0.0/24 lookup wireguard
+
+MTU
+
+Typical values: - 1500 Ethernet - 1420 WireGuard default - 1380 VPN over
+VPN - 1360 PPPoE - 1280 IPv6 minimum
+
+Test:
+
+    ping -M do -s 1400 10.60.1.10
+
+TCP MSS:
+
+    iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+Troubleshooting
+
+No handshake: - Firewall - UDP/51820 blocked - Bad keys - Wrong endpoint
+
+Handshake but no traffic: - AllowedIPs - Missing route - IP forwarding
+disabled - Missing NAT
+
+Useful commands:
+
+    wg
+    ip route
+    iptables -L -n -v
+    iptables -t nat -L -n -v
+    journalctl -u wg-quick@wg0 -f
+    tcpdump -ni any udp port 51820
+    tcpdump -ni wg0
+
+Enterprise Best Practices
+
+-   Use split tunneling where possible.
+-   Keep AllowedIPs specific.
+-   Use /32 peer addresses.
+-   Document every peer.
+-   Rotate keys periodically.
+-   Log VPN traffic into SIEM/Graylog.
+-   Restrict access with firewall rules.
+-   Use Dynamic DNS for roaming users.
+-   Consider one WireGuard interface per customer or security zone.
+-   Use policy-based routing for multiple WANs.
+-   Prefer split DNS over hairpin NAT.

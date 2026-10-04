@@ -1,0 +1,160 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 21 BASH AUTOMATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+Automation reduces repetitive work, improves consistency, and minimizes
+human error. This chapter demonstrates safe Bash automation techniques
+for managing WireGuard environments.
+
+===============================================================================
+2. SCRIPT STANDARDS
+===============================================================================
+
+Begin production scripts with:
+
+#!/usr/bin/env bash set -euo pipefail
+
+Recommendations
+
+-   Validate all input.
+-   Log important actions.
+-   Exit on errors.
+-   Use descriptive variables.
+-   Test in staging before production.
+
+===============================================================================
+3. CREATE A NEW PEER
+===============================================================================
+
+Generate keys
+
+wg genkey | tee private.key | wg pubkey > public.key
+
+Assign the next available VPN address from the documented allocation
+plan.
+
+Record:
+
+-   Hostname
+-   Owner
+-   VPN IP
+-   Public key
+-   Date created
+
+===============================================================================
+4. CONFIGURATION TEMPLATES
+===============================================================================
+
+Store reusable templates.
+
+server.conf.template client.conf.template
+
+Replace variables with:
+
+HOSTNAME VPN_IP PUBLIC_KEY PRIVATE_KEY DNS_SERVER
+
+Keep templates under version control.
+
+===============================================================================
+5. AUTOMATED BACKUPS
+===============================================================================
+
+Archive configuration
+
+tar czf /var/backups/wireguard-$(date +%F).tar.gz /etc/wireguard
+
+Export firewall
+
+iptables-save > /var/backups/firewall.rules
+
+Schedule using cron or systemd timers.
+
+===============================================================================
+6. HEALTH CHECK SCRIPT
+===============================================================================
+
+Verify
+
+wg show systemctl is-active wg-quick@wg0 ip route ss -lunp | grep 51820
+
+Alert if:
+
+-   Tunnel inactive
+-   Handshake stale
+-   Interface missing
+
+===============================================================================
+7. LOG ROTATION
+===============================================================================
+
+Use logrotate for custom logs.
+
+Review
+
+/etc/logrotate.conf /etc/logrotate.d/
+
+Retain logs according to organizational policy.
+
+===============================================================================
+8. AUTOMATED VALIDATION
+===============================================================================
+
+After every deployment verify:
+
+-   Tunnel active
+-   Routes installed
+-   DNS reachable
+-   Firewall loaded
+-   Required hosts respond
+
+Automated validation reduces configuration drift.
+
+===============================================================================
+9. SAFE SCRIPTING
+===============================================================================
+
+Avoid:
+
+-   Hard-coded private keys
+-   Unquoted variables
+-   Blind deletion (rm -rf)
+
+Use:
+
+mktemp trap readonly variables quoted paths
+
+===============================================================================
+10. EXAMPLE WORKFLOW
+===============================================================================
+
+1.  Generate keys.
+2.  Allocate VPN address.
+3.  Create client configuration.
+4.  Update server peer.
+5.  Restart or sync configuration.
+6.  Validate handshake.
+7.  Back up configuration.
+8.  Commit changes to version control.
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Keep scripts idempotent.
+-   Store scripts in Git.
+-   Review changes through pull requests.
+-   Log automation results.
+-   Schedule regular health checks.
+-   Sign release scripts where appropriate.
+
+===============================================================================
+12. AUTOMATION CHECKLIST
+===============================================================================
+
+[ ] Scripts version controlled [ ] Input validation implemented [ ]
+Logging enabled [ ] Error handling tested [ ] Backups automated [ ]
+Health checks scheduled [ ] Documentation updated
+
+END OF CHAPTER 21

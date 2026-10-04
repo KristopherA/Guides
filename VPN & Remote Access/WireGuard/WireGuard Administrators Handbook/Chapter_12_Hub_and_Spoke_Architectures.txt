@@ -1,0 +1,143 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 12 HUB-AND-SPOKE
+ARCHITECTURES
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+Hub-and-spoke is the most common enterprise WireGuard deployment model.
+A central hub provides secure connectivity to multiple branch offices,
+remote administrators, vendors, and mobile users while simplifying
+routing and policy management.
+
+===============================================================================
+2. TOPOLOGY
+===============================================================================
+
+                    Internet
+                        |
+                 +---------------+
+                 |  HQ Firewall  |
+                 +---------------+
+                        |
+                   +---------+
+                   | WG Hub  |
+                   +---------+
+                    /   |   \
+              Branch1 Branch2 Admin
+
+Advantages: - Centralized management - One public endpoint - Consistent
+firewall policy - Easier monitoring - Simplified onboarding
+
+===============================================================================
+3. ADDRESSING PLAN
+===============================================================================
+
+VPN Infrastructure 10.100.0.0/24
+
+Hub 10.100.0.1 Branch A 10.100.0.10 Branch B 10.100.0.20 Administrator
+10.100.0.100
+
+Branch Networks
+
+10.60.10.0/24 Headquarters 10.1.0.0/24 Branch A 10.2.0.0/24 Branch B
+10.3.0.0/24 Branch C
+
+Avoid overlapping address space.
+
+===============================================================================
+4. HUB CONFIGURATION
+===============================================================================
+
+Each branch receives its own peer entry.
+
+Example
+
+[Peer] PublicKey = BRANCH_A_PUBLIC_KEY AllowedIPs =
+10.100.0.10/32,10.1.0.0/24
+
+[Peer] PublicKey = BRANCH_B_PUBLIC_KEY AllowedIPs =
+10.100.0.20/32,10.2.0.0/24
+
+===============================================================================
+5. SPOKE CONFIGURATION
+===============================================================================
+
+[Peer] PublicKey = HUB_PUBLIC_KEY Endpoint = vpn.example.com:51820
+AllowedIPs = 10.60.10.0/24 PersistentKeepalive = 25
+
+===============================================================================
+6. FIREWALL DESIGN
+===============================================================================
+
+Allow only required destinations.
+
+Examples
+
+iptables -A FORWARD -i wg0 -d 10.60.40.0/24 -j ACCEPT iptables -A
+FORWARD -i wg0 -d 10.60.20.0/24 -p tcp –dport 8006 -j ACCEPT
+
+Default deny after explicit allows.
+
+===============================================================================
+7. ROUTE SUMMARIZATION
+===============================================================================
+
+Individual
+
+10.1.0.0/24 10.1.1.0/24 10.1.2.0/24
+
+Summary
+
+10.1.0.0/22
+
+Summarize only when the addressing plan supports it.
+
+===============================================================================
+8. SCALING
+===============================================================================
+
+For large deployments:
+
+-   Configuration management
+-   IP allocation registry
+-   Naming standards
+-   Peer audits
+-   Handshake monitoring
+-   Configuration backups
+
+===============================================================================
+9. MONITORING
+===============================================================================
+
+wg show wg show latest-handshakes wg show transfer iptables -L -n -v
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Branch offline - Internet - UDP/51820 - DNS - Keys
+
+Connected but cannot reach HQ - AllowedIPs - Routes - Firewall - IP
+forwarding
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   One peer per site
+-   One VPN IP per peer
+-   Least-privilege routing
+-   Central logging
+-   Document ownership
+-   Test failover
+-   Review stale peers
+
+===============================================================================
+12. CHECKLIST
+===============================================================================
+
+[ ] Hub operational [ ] Spokes connected [ ] Routes validated [ ]
+Firewalls tested [ ] Monitoring enabled [ ] Documentation updated
+
+END OF CHAPTER 12

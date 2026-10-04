@@ -1,0 +1,452 @@
+===========================================================================
+ URL & DOCUMENT TRIAGE - THE UNIFIED WORKFLOW
+===========================================================================
+ Last reviewed: 2026-09-04
+ Entry point:   START-HERE.txt (one page, pick your starting stage)
+ This file:     the whole process, in order, with the reasoning
+
+---------------------------------------------------------------------------
+ THE SHAPE OF THE PROBLEM
+---------------------------------------------------------------------------
+
+Suspicious material arrives in one of three forms, and they are the same
+investigation entered at different points:
+
+  an email        -> which contains links and attachments
+  a bare URL      -> which may lead to a document
+  a document      -> which may contain links
+
+A link leads to a document. A document contains links. The chain runs in
+both directions and it does not stop after one hop. That is the single fact
+this workflow is built around: you cannot triage a URL without being ready
+to triage a document, and you cannot triage a document without being ready
+to triage a URL.
+
+So the workflow is four stages that hand work to each other, in a loop,
+until the queue is empty:
+
+      +-----------------------------------------------------------+
+      |                                                           |
+      v                                                           |
+   STAGE 0                STAGE 1              STAGE 2            |
+   INTAKE      --URLs-->  URL ANALYSIS  --doc--> DOCUMENT ANALYSIS|
+   (email)                                                        |
+      |                        ^                     |            |
+      |                        |                     |            |
+      +--attachments-----------|---------------------+            |
+                               |                                  |
+                               +------URLs found inside-----------+
+                                        (loop back)
+
+                                  |
+                                  v
+                              STAGE 3
+                              VERDICT, CONTAINMENT, HANDOFF
+                                  |
+                                  v
+                    modules/  (detonation lab, host triage,
+                               detection engineering, validation)
+
+Every stage runs standalone. Every stage also passes structured facts to the
+next one, so the whole chain can run from a single command.
+
+---------------------------------------------------------------------------
+ THE FOUR STAGES
+---------------------------------------------------------------------------
+
+  STAGE 0   INTAKE                triage/stage-0-intake/
+            Preserve the evidence, establish what you have. Headers, sender
+            authentication, the Received chain, the URL list, the saved
+            attachments. Judges nothing.
+            Script: extract_email.sh
+
+  STAGE 1   URL ANALYSIS          triage/stage-1-url/
+            Find out where a URL actually leads and what is waiting there,
+            without visiting it. Decode, resolve, age the domain, trace
+            redirects, read the certificate, check reputation, and follow
+            the nesting into whatever it serves.
+            Script: analyze_url.sh
+
+  STAGE 2   DOCUMENT ANALYSIS     triage/stage-2-document/
+            Decide whether a document is malicious by reading its bytes and
+            structure, never by opening it. Routes by real file type: OOXML,
+            legacy OLE2, PDF, RTF. Finds macros, external references,
+            embedded objects, and every URL inside.
+            Script: check_document.sh
+
+  STAGE 3   VERDICT               triage/stage-3-verdict/
+            Score the flags, apply the overrides, write the record, contain,
+            escalate, notify, feed forward. The only stage with no script,
+            because it is the only stage that is a judgement.
+            Template: ioc-record-template.txt
+
+  CONNECTOR                       triage/run_triage.sh
+            Runs the whole chain from one command, keeps every stage's output
+            in one case folder, and prints a weighted, scored flag summary
+            plus a provisional verdict for stage 3.
+
+  SUPPORTING                      triage/setup/preflight.sh
+            Checks every tool the stages call, installs what is missing,
+            re-verifies. Run it before a session you care about.
+
+                                  triage/search_cases.sh
+            Asks the previous cases whether an indicator has been seen
+            before. This is what makes writing a record for a benign case
+            worth doing.
+
+                                  triage/test/run_tests.sh
+            Builds synthetic fixtures and asserts what each stage concludes
+            about them. Run it after any tool or macOS upgrade.
+
+---------------------------------------------------------------------------
+ RUNNING IT
+---------------------------------------------------------------------------
+
+FIRST TIME ON THIS MACHINE
+  cd triage/setup
+  ./preflight.sh                # checks, installs what is missing, verifies
+  vt init                       # paste a free VirusTotal API key
+  cd ../test && ./run_tests.sh   # confirm it actually works
+  Details and troubleshooting:  triage/setup/SETUP.txt
+
+  Run preflight.sh again after any tool upgrade or macOS upgrade. A missing
+  tool does not make a stage fail - it makes the stage skip a check and
+  carry on, and the report still looks complete. The stages flag that now,
+  but not being in that state is better than being told about it.
+
+WHOLE CHAIN, ONE COMMAND
+  export CASE_DIR=~/ir-cases/CASE-2026-001
+
+  cd triage
+  ./run_triage.sh --eml  ~/ir-cases/CASE-2026-001/reported.eml
+  ./run_triage.sh --url  "https://suspicious.example/path"
+  ./run_triage.sh --file ~/ir-cases/CASE-2026-001/invoice.docx
+
+  Optional, and worth setting when you know what is being impersonated -
+  it turns on the automatic typosquat comparison in stage 1:
+  BRAND_DOMAIN=microsoft.com ./run_triage.sh --url "https://..."
+
+HOW MUCH TO TOUCH THE TARGET
+  TRIAGE_FETCH=full       (default) fetch headers, follow redirects,
+                          download content. Most complete; the target
+                          learns you looked.
+  TRIAGE_FETCH=no-touch   send nothing to the target host. DNS, WHOIS and
+                          crt.sh still run - those query registries and
+                          public logs, not the attacker.
+  TRIAGE_FETCH=offline    no network at all.
+
+  Use no-touch when tipping off the operator costs more than the missing
+  headers: a live campaign you are still mapping, or a kit that retires a
+  URL the moment it sees a scanner. Everything a policy suppresses is
+  recorded as an incomplete flag, so a quiet run cannot come back clean.
+
+  The user agent no longer announces itself as a scanner. Override it with
+  TRIAGE_UA if your organisation requires scanners to be identifiable.
+
+HAVE WE SEEN THIS BEFORE
+  ./search_cases.sh <hash, domain, or URL>
+  ./search_cases.sh --file <case>/indicators.txt
+  ./search_cases.sh --list          index every case, newest first
+  ./search_cases.sh --stats          what the archive holds
+
+  Set IR_CASES_ROOT if your cases do not live in ~/ir-cases.
+
+ONE STAGE AT A TIME
+  triage/stage-0-intake/extract_email.sh      reported.eml
+  triage/stage-1-url/analyze_url.sh           "https://..."  2
+  triage/stage-2-document/check_document.sh   suspicious.docx
+
+  Every script honours CASE_DIR, so partial and full runs land together.
+
+WHAT COMES OUT
+  <case>/CASE-LOG.txt            everything, in order (run_triage.sh only)
+  <case>/hashes.txt              every SHA-256 observed
+  <case>/indicators.txt          every URL, defanged, ready to paste
+  <case>/flags.txt               every red flag, with its weight
+  <case>/provisional-verdict.txt BENIGN / SUSPICIOUS / MALICIOUS
+  <case>/stage-0-intake/         headers, urls.txt, attachments/
+  <case>/stage-1-url/            per-URL reports, downloads/
+  <case>/stage-2-document/       per-document reports, unpacked/, extracted/
+
+---------------------------------------------------------------------------
+ STEPPING THROUGH IT
+---------------------------------------------------------------------------
+
+What follows is the process in order. Each step names the stage that owns it,
+so you can read this as the overview and the stage's procedure.txt as the
+detail. Nothing is duplicated between the two: this file says what and why,
+the procedures say how.
+
+STEP 1 - PRESERVE BEFORE YOU INVESTIGATE                        (stage 0)
+  Hash the original before anything else and record it in the ticket. Work
+  on a copy, in a local non-synced folder. This is not bureaucracy - the
+  hash is what connects this case to the next one, and the copy is what
+  stops a malicious file from syncing itself to your other devices.
+  -> triage/stage-0-intake/procedure.txt, steps 1-2
+
+STEP 2 - ESTABLISH WHAT YOU HAVE                                (stage 0)
+  Headers, sender identity fields, sender authentication, the Received
+  chain, the URL list, the attachments. Skip this stage entirely if you were
+  handed a bare URL or a loose file - everything downstream works without it.
+  -> triage/stage-0-intake/procedure.txt, steps 3-7
+
+STEP 3 - ASSESS THE ASK, NOT JUST THE ARTEFACT                  (stage 0)
+  What is the message trying to get someone to do? Credentials, an MFA
+  approval, a payment, urgency, a channel switch, impersonated authority.
+  No tool detects any of this and it is often the strongest signal in the
+  case.
+  -> triage/stage-0-intake/procedure.txt, step 8
+
+STEP 4 - ESTABLISH USER IMPACT NOW, NOT LATER                   (stage 0)
+  Did anyone click, enter credentials, approve MFA, or open the attachment,
+  and on which machine? The answer sets the containment scope in stage 3,
+  and it takes one message to ask. Asking at the end wastes the interval.
+  -> triage/stage-0-intake/procedure.txt, step 9
+
+STEP 5 - FOR EVERY URL: WHERE DOES IT ACTUALLY GO               (stage 1)
+  Decode it, decode punycode, resolve it, age the domain, compare it against
+  the brand it claims, check the CT logs for its siblings, trace the
+  redirects, read the certificate, check reputation. In that order, because
+  each answer changes how you read the next.
+  -> triage/stage-1-url/procedure.txt, steps 1-9
+
+STEP 6 - FOR EVERY URL: WHAT IS IT SERVING                      (stage 1)
+  The content type decides what happens next. HTML gets read for hidden
+  redirects and smuggled payloads. A PDF or an Office file goes to stage 2.
+  An image gets its QR code decoded. An archive or an installer is not a
+  link at all - it is a sample, and it goes to the lab.
+  -> triage/stage-1-url/procedure.txt, step 10
+
+STEP 7 - FOR EVERY DOCUMENT: WHAT IS IT REALLY                  (stage 2)
+  Type from the bytes, not the extension. Hash it. Read its metadata and
+  provenance. Check the hash against VirusTotal - never upload the file.
+  Scan it locally.
+  -> triage/stage-2-document/procedure.txt, steps 1-4
+
+STEP 8 - FOR EVERY DOCUMENT: WHAT CAN IT DO                     (stage 2)
+  Macros, and specifically whether an auto-run trigger sits next to a shell
+  or download keyword. P-code stomping. XLM macros, which live in formulas
+  where olevba cannot see them. Then unpack the container and read its
+  structure directly.
+  -> triage/stage-2-document/procedure.txt, steps 5-6
+
+STEP 9 - FOR EVERY DOCUMENT: WHERE DOES IT REACH                (stage 2)
+  The most important check in document triage. External relationships,
+  remote templates, DDE fields, UNC paths, WEBSERVICE formulas, embedded
+  objects, PDF /OpenAction and /Launch, RTF Equation objects. This is how a
+  document with no macros at all still executes something or phones home.
+  -> triage/stage-2-document/procedure.txt, steps 7-9
+
+STEP 10 - CLOSE THE LOOP                                    (stages 1+2)
+  Every URL a document contains goes back to stage 1. Every document a URL
+  serves goes to stage 2. Keep going until the queue is empty or you hit
+  the depth cap. Judge nothing on a domain name.
+  -> run_triage.sh does this automatically
+
+STEP 11 - READ THE SCORE, THEN OVERRIDE IT                      (stage 3)
+  The scripts already scored it. Each flag carries a weight - decisive,
+  strong (2), supporting (1), context (0) - and any decisive flag alone
+  means MALICIOUS, otherwise 4+ points is MALICIOUS and 2-3 is SUSPICIOUS.
+  A check that did not run is recorded too, and floors the verdict at
+  SUSPICIOUS, so "I could not check" can no longer be filed as "it was
+  clean".
+
+  Your job is the part arithmetic cannot reach: what the message was asking
+  someone to do, and whether anyone did it. Either can carry the verdict on
+  its own, and neither produces a flag.
+  -> triage/stage-3-verdict/procedure.txt, steps 1-4
+
+STEP 11b - ASK THE PREVIOUS CASES                               (stage 3)
+  ./search_cases.sh --file <case>/indicators.txt
+  Shared infrastructure across two cases is a campaign, which changes the
+  response from "block this" to "block the pattern and find who else got
+  it". An indicator you cleared as benign last month coming back is a
+  reason to look harder, not to close faster.
+  -> triage/stage-3-verdict/procedure.txt, step 5
+
+STEP 12 - RECORD IT, INCLUDING THE BENIGN ONES                  (stage 3)
+  Fill in the record whatever the verdict. Benign records are what let you
+  recognise the next campaign as a repeat, and they are the answer when
+  somebody asks six weeks later why nothing was blocked.
+  -> triage/stage-3-verdict/ioc-record-template.txt
+
+STEP 13 - CONTAIN THE WHOLE CHAIN, NOT THE LANDING PAGE         (stage 3)
+  Purge the message tenant-wide, not just from the reporter's mailbox. Block
+  every hop and every CT-log sibling, not only the final host. Push hashes
+  to EDR and search the environment for other copies. Reset credentials and
+  re-register MFA if anyone interacted, and check mailbox rules - new
+  auto-forward rules are the standard BEC persistence move.
+  -> triage/stage-3-verdict/procedure.txt, steps 6-7
+
+STEP 14 - ESCALATE ON THE TRIGGERS, MID-TRIAGE                  (stage 3)
+  Confirmed C2, lateral movement tooling, credential harvesting, a
+  production host that opened the file, known ransomware or APT tooling, a
+  threat-intel hit. Any one of these means the response clock starts now.
+  Do not finish the paperwork first.
+  -> triage/stage-3-verdict/procedure.txt, step 8
+
+STEP 15 - FEED IT FORWARD, OR THE WORK WAS WASTED               (stage 3)
+  A verdict that changes nothing downstream bought you nothing. Indicators
+  go to detection engineering; the resulting rule goes to validation; an
+  unresolved sample goes to the lab; a host that opened something gets
+  swept. The loop closes when a rule that catches the next copy of this
+  campaign exists and has been proven to fire.
+  -> triage/stage-3-verdict/procedure.txt, step 10
+
+---------------------------------------------------------------------------
+ RULES OF ENGAGEMENT
+---------------------------------------------------------------------------
+
+  1. Never click the link. Copy it as text from the raw source.
+  2. Never open the document. Not in Word, not in Preview, not "just to
+     look". Opening it can fire a macro, resolve a remote template, or hit a
+     parser exploit before anything renders.
+  3. Hash the original first, then work on a copy in a local non-synced
+     folder.
+  4. These scripts read bytes and fetch headers. They never execute a
+     sample. Detonation is a separate, deliberate step in an isolated VM.
+  5. Hash lookups only against VirusTotal. Uploading a business document to
+     a public service is a data-loss event even when the file is harmless.
+  6. Defang every indicator that leaves the toolkit.
+  7. A clean result narrows risk. It never proves safety.
+
+---------------------------------------------------------------------------
+ HOW THE STAGES TALK TO EACH OTHER
+---------------------------------------------------------------------------
+
+Each stage prints machine-readable lines alongside its human-readable report:
+
+  CHAIN::<LABEL>::<value>
+
+That is the whole interface. A stage greps another stage's output for the
+labels it cares about, so nothing has to parse prose, and any stage can be
+replaced without touching the others.
+
+  LABEL              FROM      TO      MEANING
+  EXTRACTED_URL      stage 0   1       a URL pulled out of an email body
+  ATTACHMENT         stage 0   2       a file saved out of an email
+  SENDER_DOMAIN      stage 0   1       the From domain, for auth/typosquat work
+  AUTH_FAIL          stage 0   3       an SPF/DKIM/DMARC failure
+  SAVED_DOC          stage 1   2       a document downloaded from a URL
+  EXTERNAL_URL       stage 2   1       a URL found inside a document
+  FILE_SHA256        stage 1,2 3       hash of anything examined
+  FLAG               any       3       a red flag, WITH ITS WEIGHT
+  REPORT_PATH        any       3       where that stage wrote its report
+
+FLAG carries the weight in the marker itself, so the score is computed from
+the same data the report shows:
+
+  CHAIN::FLAG::decisive::doc:dde-field
+  CHAIN::FLAG::strong::doc:remote-template
+  CHAIN::FLAG::supporting::doc:external-relationship
+  CHAIN::FLAG::context::doc:has-macro
+  CHAIN::FLAG::incomplete::tool-missing:rg
+
+The weights are the ones written out in reference/indicators.txt. The last
+one is not an indicator: it says a check DID NOT RUN, scores nothing, and
+prevents the case closing BENIGN.
+
+Definitions and helpers: triage/lib/common.sh
+
+---------------------------------------------------------------------------
+ WHERE EVERYTHING LIVES
+---------------------------------------------------------------------------
+
+  START-HERE.txt                  one page: pick your starting stage
+  WORKFLOW.txt                    this file
+
+  triage/
+    run_triage.sh                 whole chain from one command
+    search_cases.sh               have we seen this indicator before?
+    lib/common.sh                 hashing, defanging, weighted flags,
+                                  scoring, fetch policy, chain markers
+    setup/preflight.sh            check and install every tool, then verify
+    setup/install-tools.sh        the installer preflight.sh drives
+    setup/SETUP.txt               machine setup + troubleshooting
+    stage-0-intake/               procedure.txt + extract_email.sh
+    stage-1-url/                  procedure.txt + analyze_url.sh
+    stage-2-document/             procedure.txt + check_document.sh
+    stage-3-verdict/              procedure.txt + ioc-record-template.txt
+    test/make_fixtures.sh         builds benign synthetic test artefacts
+    test/run_tests.sh             asserts what each stage concludes
+
+  reference/
+    commands-by-filetype.txt      the command lookup, grouped by artefact
+    indicators.txt                every red flag, with its weight
+    tool-index.txt                every tool: purpose, stage, install
+
+  modules/                        stand-alone; linked from the stage that
+                                  hands off to them - see modules/README.txt
+    detonation-lab/               when static analysis is not enough
+    macos-host-triage.txt         when a host may have opened it
+    detection-engineering.txt     turning indicators into detections
+    detection-validation.md       proving a detection actually fires
+    file-recovery.txt             recovering deleted files (lab support)
+    cli-security-tools.md         general security toolbox, not this workflow
+
+  tools/                          app aliases, docker services, Malcat prompt
+  _archive/                       superseded originals, with a manifest
+
+---------------------------------------------------------------------------
+ KNOWN GAPS
+---------------------------------------------------------------------------
+
+Honest limits of this workflow. None of these is a reason not to use it;
+each is a reason not to over-read a clean result.
+
+  Cloaking             one fetch from one IP with one user agent may see a
+                       different page than a victim. Cross-check urlscan.io.
+  JS-rendered pages    links assembled at runtime need a headless browser.
+  Runtime-built URLs   a URL concatenated by VBA at execution time is not in
+                       the static content and will not be found.
+  Password protection  archives and documents you have no password for.
+  Unrouted containers  .lnk, .iso/.img/.vhd, .chm, .xll, .one - all current
+                       delivery wrappers with no branch in stage 2. Treat
+                       them as samples for the lab.
+  Threat feeds         PhishTank, OpenPhish, Abuse.ch are manual lookups; no
+                       automated "already reported" check.
+  Geofencing           some kits only serve the payload to one country or to
+                       a mobile user agent.
+  Auth walls           a SharePoint or Drive link may need a login first -
+                       and that login is often the phish.
+  Shellcode and JS     once you have extracted a shellcode blob or an
+                       obfuscated script, the commands are in
+                       reference/commands-by-filetype.txt but no procedure
+                       walks you through working it. The old runbook that
+                       did is at _archive/superseded-procedures/Malicious
+                       Document IR Runbook.txt, scenarios 5-7.
+  Unrouted extras      the stage-2 script does not dump [Content_Types].xml,
+                       does not pass --excel to olevba, and drops
+                       word/webSettings.xml as a named target. All three are
+                       in reference/commands-by-filetype.txt if you want
+                       them by hand.
+
+---------------------------------------------------------------------------
+ CHANGE HISTORY
+---------------------------------------------------------------------------
+2026-09-04  Consolidated from 30+ overlapping files into this four-stage
+            workflow. Stage 2 gained PDF and RTF routing, DDE and template-
+            injection detection, XLM macros, and p-code stomping checks that
+            existed in the reference material but never in a script. Stage 0
+            (email intake and sender authentication) and stage 3 (scoring,
+            containment, handoff) are new as stages. Superseded originals
+            are in _archive/ with a manifest. See _archive/MANIFEST.txt.
+
+2026-09-04  Second pass, addressing five weaknesses found by reviewing the
+            first:
+            - Flags now carry weights, and the score respects them. Counting
+              flags 1:1 had treated "has macros" and "has a DDE field" as
+              equal. reference/indicators.txt and the scripts now encode the
+              same table.
+            - A skipped check records an incomplete flag instead of a prose
+              warning, and a case carrying one cannot close BENIGN. Missing
+              tools used to produce confident-looking empty reports.
+            - setup/preflight.sh checks and installs everything in one
+              command, and re-verifies afterwards.
+            - Stage 1 gained TRIAGE_FETCH=no-touch and offline, and stopped
+              identifying itself as "URL-Triage-Script" in the user agent.
+            - search_cases.sh reads back prior cases, which is what makes
+              recording a benign verdict worth the effort.
+            - VirusTotal rate-limiting is no longer indistinguishable from
+              an unknown hash.
+            - test/run_tests.sh: 80 assertions over 11 synthetic fixtures.

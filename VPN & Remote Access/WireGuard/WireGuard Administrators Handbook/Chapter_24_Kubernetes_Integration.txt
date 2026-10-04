@@ -1,0 +1,186 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 24 KUBERNETES
+INTEGRATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter covers deploying WireGuard in Kubernetes clusters for
+secure administrative access, inter-cluster connectivity, and service
+networking.
+
+===============================================================================
+2. USE CASES
+===============================================================================
+
+-   Administrative access to clusters
+-   Site-to-site connectivity
+-   Cluster-to-cluster networking
+-   Secure access to internal services
+-   Hybrid cloud connectivity
+
+Avoid exposing the Kubernetes API directly to the Internet when a VPN is
+available.
+
+===============================================================================
+3. DEPLOYMENT MODELS
+===============================================================================
+
+Deployment - Suitable for a single WireGuard endpoint.
+
+DaemonSet - One WireGuard pod per node. - Useful for node-level
+networking.
+
+StatefulSet - Useful when stable identities or storage are required.
+
+===============================================================================
+4. KUBERNETES PREREQUISITES
+===============================================================================
+
+Verify:
+
+kubectl get nodes kubectl get pods -A
+
+Each node should support the WireGuard kernel module or use an image
+capable of operating in the target environment.
+
+===============================================================================
+5. SECRETS
+===============================================================================
+
+Store:
+
+-   Private keys
+-   Pre-shared keys (if used)
+-   Configuration fragments
+
+Use Kubernetes Secrets.
+
+Example
+
+kubectl create secret generic wireguard-keys
+–from-file=private.key
+
+Restrict RBAC access to Secrets.
+
+===============================================================================
+6. PERSISTENT STORAGE
+===============================================================================
+
+Persist:
+
+-   Configuration
+-   Generated peer information
+-   Logs (if required)
+
+Use PersistentVolumeClaims where appropriate.
+
+===============================================================================
+7. NETWORKING
+===============================================================================
+
+Typical components
+
+Client | WireGuard Pod | Cluster Network | Services
+
+Use ClusterIP services for internal resources and expose only required
+administrative endpoints.
+
+===============================================================================
+8. NETWORKPOLICIES
+===============================================================================
+
+Restrict communication to the minimum required.
+
+Examples
+
+-   Allow VPN pod to Kubernetes API
+-   Allow VPN pod to management namespace
+-   Deny unnecessary east-west traffic
+
+Review policies after every namespace change.
+
+===============================================================================
+9. ROLLING UPDATES
+===============================================================================
+
+Typical workflow
+
+1.  Build image
+2.  Push to registry
+3.  Update Deployment
+4.  Observe rollout
+
+Commands
+
+kubectl rollout status deployment/wireguard kubectl rollout history
+deployment/wireguard
+
+Rollback
+
+kubectl rollout undo deployment/wireguard
+
+===============================================================================
+10. MONITORING
+===============================================================================
+
+Useful commands
+
+kubectl get pods kubectl describe pod wireguard kubectl logs
+deployment/wireguard
+
+Inside the pod
+
+wg show ip addr ip route
+
+Monitor:
+
+-   Pod restarts
+-   Handshake age
+-   Resource usage
+-   Network latency
+
+===============================================================================
+11. TROUBLESHOOTING
+===============================================================================
+
+Pod CrashLoopBackOff
+
+-   Missing Secret
+-   Invalid configuration
+-   Missing capabilities
+-   Kernel support unavailable
+
+Tunnel established but traffic fails
+
+-   NetworkPolicy
+-   Routes
+-   Service CIDRs
+-   Firewall
+
+DNS issues
+
+kubectl exec -it – nslookup kubernetes.default
+
+===============================================================================
+12. BEST PRACTICES
+===============================================================================
+
+-   Store manifests in Git.
+-   Encrypt Secrets.
+-   Use least-privilege RBAC.
+-   Apply NetworkPolicies.
+-   Monitor rollouts.
+-   Test upgrades in non-production.
+-   Keep images pinned to known versions.
+
+===============================================================================
+13. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] Cluster prerequisites verified [ ] Secrets deployed [ ] Persistent
+storage configured [ ] NetworkPolicies validated [ ] Rollout tested [ ]
+Monitoring enabled [ ] Backup procedures documented [ ] Documentation
+updated
+
+END OF CHAPTER 24

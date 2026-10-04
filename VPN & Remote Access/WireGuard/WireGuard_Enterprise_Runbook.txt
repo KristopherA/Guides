@@ -1,0 +1,244 @@
+===============================================================================
+WIREGUARD ENTERPRISE RUNBOOK
+===============================================================================
+
+Version: 1.0 Date: 2026-06-30
+
+Purpose: This runbook provides a production-oriented reference for
+deploying, operating, and troubleshooting WireGuard in enterprise IT
+environments with segmented networks, multiple VLANs, site-to-site
+tunnels, roaming clients, and hardened firewall policies.
+
+Contents
+
+1.  Architecture
+2.  Installation
+3.  Key Management
+4.  Server Configuration
+5.  Client Configuration
+6.  Routing
+7.  Policy-Based Routing
+8.  iptables Cookbook
+9.  nftables Cookbook
+10. Site-to-Site VPN
+11. Hub-and-Spoke
+12. Full Mesh
+13. Multi-WAN
+14. High Availability
+15. DNS
+16. MTU/MSS
+17. Monitoring
+18. Logging
+19. Packet Capture
+20. Troubleshooting
+21. Security Best Practices
+22. Operational Checklists
+
+===============================================================================
+REFERENCE NETWORK
+===============================================================================
+
+VPN Network 10.100.0.0/24 Servers 10.60.10.0/24 Hypervisors
+10.60.20.0/24 Storage 10.60.30.0/24 Management 10.60.40.0/24 DMZ
+10.60.50.0/24 Lab 192.168.100.0/24
+
+Example topology
+
+Internet | Firewall | WireGuard Gateway (wg0) | +——+——+——+——+ | | | | |
+Srv HV Mgmt DMZ Storage
+
+===============================================================================
+INSTALLATION
+===============================================================================
+
+Ubuntu
+
+sudo apt update sudo apt install wireguard wireguard-tools
+
+Enable service
+
+sudo systemctl enable wg-quick@wg0
+
+Start
+
+sudo wg-quick up wg0
+
+Status
+
+sudo wg ip addr ip route ss -lunp | grep 51820
+
+===============================================================================
+KEY MANAGEMENT
+===============================================================================
+
+Generate keys
+
+wg genkey > private.key wg pubkey < private.key > public.key
+
+Recommendations - One keypair per device. - Store private keys with 600
+permissions. - Rotate keys annually or after compromise. - Remove stale
+peers promptly.
+
+===============================================================================
+SERVER CONFIGURATION
+===============================================================================
+
+[Interface] Address = 10.100.0.1/24 ListenPort = 51820 PrivateKey =
+SERVER_PRIVATE_KEY SaveConfig = false
+
+Example peer
+
+[Peer] PublicKey = CLIENT_KEY AllowedIPs = 10.100.0.10/32
+PersistentKeepalive = 25
+
+===============================================================================
+CLIENT CONFIGURATION
+===============================================================================
+
+[Interface] Address = 10.100.0.10/24 PrivateKey = CLIENT_PRIVATE_KEY DNS
+= 10.60.40.10
+
+[Peer] PublicKey = SERVER_PUBLIC_KEY Endpoint = vpn.example.com:51820
+AllowedIPs = 10.60.0.0/16,192.168.100.0/24 PersistentKeepalive = 25
+
+===============================================================================
+IP FORWARDING
+===============================================================================
+
+Temporary
+
+sysctl -w net.ipv4.ip_forward=1
+
+Permanent
+
+echo “net.ipv4.ip_forward=1” >> /etc/sysctl.conf sysctl -p
+
+===============================================================================
+IPTABLES COOKBOOK
+===============================================================================
+
+Allow VPN
+
+iptables -A INPUT -p udp –dport 51820 -j ACCEPT iptables -A INPUT -i wg0
+-j ACCEPT
+
+Forward
+
+iptables -A FORWARD -i wg0 -j ACCEPT iptables -A FORWARD -o wg0 -j
+ACCEPT
+
+Masquerade
+
+iptables -t nat -A POSTROUTING -s 10.100.0.0/24 -o eth0 -j MASQUERADE
+
+Restrict to management VLAN
+
+iptables -A FORWARD -i wg0 -d 10.60.40.0/24 -j ACCEPT iptables -A
+FORWARD -i wg0 -j DROP
+
+Common admin ports
+
+22 SSH 443 HTTPS 3389 RDP 5985 WinRM 53 DNS 389 LDAP 636 LDAPS
+
+===============================================================================
+NFTABLES
+===============================================================================
+
+nft add rule inet filter input udp dport 51820 accept nft add rule inet
+filter forward iif wg0 accept nft add rule ip nat postrouting oif eth0
+masquerade
+
+===============================================================================
+ADVANCED ROUTING
+===============================================================================
+
+Policy table
+
+echo “200 wireguard” >> /etc/iproute2/rt_tables
+
+ip route add default via 10.60.1.1 dev ens18 table wireguard ip rule
+add from 10.100.0.0/24 lookup wireguard
+
+Multiple interfaces
+
+wg0 Corporate wg1 CustomerA wg2 CustomerB wg3 Lab
+
+===============================================================================
+SITE-TO-SITE
+===============================================================================
+
+Office A 10.60.0.0/16
+
+Office B 10.20.0.0/16
+
+AllowedIPs should advertise the remote network only.
+
+Verify
+
+ip route wg ping traceroute
+
+===============================================================================
+MTU AND MSS
+===============================================================================
+
+Defaults
+
+1500 Ethernet 1420 WireGuard 1380 VPN over VPN
+
+Test
+
+ping -M do -s 1400 10.60.10.5
+
+Clamp MSS
+
+iptables -A FORWARD -p tcp –tcp-flags SYN,RST SYN -j TCPMSS
+–clamp-mss-to-pmtu
+
+===============================================================================
+MONITORING
+===============================================================================
+
+wg wg show journalctl -u wg-quick@wg0 -f tcpdump -ni any udp port 51820
+tcpdump -ni wg0 iptables -L -n -v iptables -t nat -L -n -v
+
+===============================================================================
+TROUBLESHOOTING DECISION TREE
+===============================================================================
+
+No handshake -> Firewall -> UDP/51820 -> DNS -> Endpoint -> Keys
+
+Handshake but no traffic -> AllowedIPs -> Routing -> Forwarding -> NAT
+
+Some VLANs unreachable -> Missing route -> ACL -> Internal firewall ->
+Reverse routing
+
+Slow transfers -> MTU -> MSS -> Duplex
+
+===============================================================================
+SECURITY BEST PRACTICES
+===============================================================================
+
+-   Use split tunnels for admin VPNs.
+-   Restrict access with firewall policy.
+-   Log VPN traffic to SIEM/Graylog.
+-   Use DNS over VPN.
+-   Keep peer inventory.
+-   Rotate keys.
+-   Disable SaveConfig in production.
+-   Backup /etc/wireguard.
+-   Use Dynamic DNS for roaming users.
+-   Separate customer tunnels using dedicated interfaces where
+    practical.
+-   Periodically audit AllowedIPs for overlaps.
+
+===============================================================================
+OPERATIONAL CHECKLIST
+===============================================================================
+
+Daily [ ] Verify latest handshakes [ ] Review logs [ ] Confirm backups
+
+Weekly [ ] Remove stale peers [ ] Verify firewall counters [ ] Test
+remote access
+
+Monthly [ ] Review routes [ ] Validate documentation [ ] Test failover [
+] Verify DNS

@@ -1,0 +1,184 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 15 IPV6
+DEPLOYMENTS
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter explains how to deploy WireGuard in IPv6-only and
+dual-stack environments. It covers addressing, routing, forwarding,
+firewall rules, DNS integration, and common troubleshooting techniques.
+
+===============================================================================
+2. WHY IPV6
+===============================================================================
+
+Advantages
+
+-   Vast address space
+-   End-to-end addressing
+-   No NAT required in most deployments
+-   Better scalability
+-   Native support in WireGuard
+
+Common deployment models
+
+-   IPv4 only
+-   Dual-stack (recommended during transition)
+-   IPv6 only
+
+===============================================================================
+3. ADDRESSING PLAN
+===============================================================================
+
+Example VPN Prefix
+
+fd42:100:100::/64
+
+Assignments
+
+Hub fd42:100:100::1/64 Administrator fd42:100:100::10/64 Branch A
+fd42:100:100::20/64 Branch B fd42:100:100::30/64
+
+Use a documented Unique Local Address (ULA) prefix for internal VPNs
+unless globally routable addresses are required.
+
+===============================================================================
+4. SERVER CONFIGURATION
+===============================================================================
+
+[Interface] Address = 10.100.0.1/24,fd42:100:100::1/64 ListenPort =
+51820 PrivateKey = SERVER_PRIVATE_KEY
+
+Example peer
+
+[Peer] PublicKey = CLIENT_PUBLIC_KEY AllowedIPs =
+10.100.0.10/32,fd42:100:100::10/128
+
+===============================================================================
+5. CLIENT CONFIGURATION
+===============================================================================
+
+[Interface] Address = 10.100.0.10/32,fd42:100:100::10/128 PrivateKey =
+CLIENT_PRIVATE_KEY DNS = 10.60.40.10
+
+[Peer] PublicKey = SERVER_PUBLIC_KEY Endpoint = vpn.example.com:51820
+AllowedIPs = 10.60.0.0/16,fd42:200::/48 PersistentKeepalive = 25
+
+===============================================================================
+6. ENABLE IPV6 FORWARDING
+===============================================================================
+
+Temporary
+
+sysctl -w net.ipv6.conf.all.forwarding=1
+
+Permanent
+
+echo “net.ipv6.conf.all.forwarding=1” >> /etc/sysctl.conf
+
+Apply
+
+sysctl -p
+
+Verify
+
+cat /proc/sys/net/ipv6/conf/all/forwarding
+
+Expected
+
+1
+
+===============================================================================
+7. ROUTING
+===============================================================================
+
+Display routes
+
+ip -6 route
+
+Test route
+
+ip -6 route get fd42:200::15
+
+Ping
+
+ping6 fd42:100:100::1
+
+Trace
+
+traceroute6 fd42:200::15
+
+===============================================================================
+8. FIREWALL
+===============================================================================
+
+iptables (legacy)
+
+ip6tables -A INPUT -p udp –dport 51820 -j ACCEPT ip6tables -A FORWARD -i
+wg0 -j ACCEPT
+
+Preferred
+
+nftables
+
+table inet filter { chain input { type filter hook input priority 0;
+policy drop;
+
+        udp dport 51820 accept
+    }
+
+}
+
+===============================================================================
+9. DNS
+===============================================================================
+
+Use AAAA records for IPv6-capable services.
+
+Validation
+
+dig AAAA server01.example.internal
+
+host -t AAAA server01.example.internal
+
+Ensure internal DNS returns both A and AAAA records where appropriate.
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+No IPv6 connectivity
+
+Check
+
+-   IPv6 forwarding
+-   AllowedIPs
+-   Firewall
+-   Routing
+-   DNS AAAA records
+
+Useful commands
+
+ip -6 addr ip -6 route wg tcpdump -ni wg0 ip6
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Deploy dual-stack during migration.
+-   Use documented ULA prefixes internally.
+-   Avoid unnecessary NAT66.
+-   Test both IPv4 and IPv6 after every change.
+-   Monitor IPv6 routes and firewall counters.
+-   Document all IPv6 prefixes.
+
+===============================================================================
+12. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] IPv6 addressing assigned [ ] Forwarding enabled [ ] Firewall updated
+[ ] Routes validated [ ] DNS AAAA records verified [ ] Connectivity
+tested [ ] Monitoring enabled [ ] Documentation updated
+
+END OF CHAPTER 15

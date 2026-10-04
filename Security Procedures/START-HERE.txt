@@ -1,0 +1,124 @@
+===========================================================================
+ SECURITY PROCEDURES - START HERE
+===========================================================================
+ URL & Document Triage. One workflow, four stages, each usable on its own.
+ Full guide: WORKFLOW.txt          Last reviewed: 2026-09-04
+
+---------------------------------------------------------------------------
+ WHAT DO YOU HAVE IN FRONT OF YOU?
+---------------------------------------------------------------------------
+
+A REPORTED EMAIL
+  cd triage
+  ./run_triage.sh --eml ~/ir-cases/CASE-001/reported.eml
+  Runs all four stages: headers and auth, then every URL, then every
+  attachment, then a scored summary.
+  Manual walkthrough:  triage/stage-0-intake/procedure.txt
+
+A BARE URL, no email or attachment
+  cd triage
+  ./run_triage.sh --url "https://suspicious.example/path"
+  Manual walkthrough:  triage/stage-1-url/procedure.txt
+
+A FILE ALREADY ON DISK
+  cd triage
+  ./run_triage.sh --file ~/Downloads/invoice.docx
+  Handles .docx .xlsx .pptx .docm .xlsm .pptm .doc .xls .ppt .pdf .rtf
+  Manual walkthrough:  triage/stage-2-document/procedure.txt
+
+A VERDICT TO REACH, evidence already gathered
+  triage/stage-3-verdict/procedure.txt
+  triage/stage-3-verdict/ioc-record-template.txt
+
+---------------------------------------------------------------------------
+ BEFORE THE FIRST RUN
+---------------------------------------------------------------------------
+  cd triage/setup
+  ./preflight.sh                  # checks, installs what is missing, verifies
+  vt init                         # paste a free VirusTotal API key
+  cd ../test && ./run_tests.sh     # confirm the toolkit actually works
+
+  Re-run preflight.sh after any tool or macOS upgrade. A missing tool does
+  not make a stage fail - it makes the stage skip a check and carry on, so
+  the report still looks complete. Cases with skipped checks are flagged and
+  cannot be closed as BENIGN, but it is better not to be in that state.
+
+  Anything failed?  triage/setup/SETUP.txt has troubleshooting per tool.
+
+---------------------------------------------------------------------------
+ KEEP THE CASE TOGETHER
+---------------------------------------------------------------------------
+  export CASE_DIR=~/ir-cases/CASE-2026-001
+
+  Every script honours it, so partial runs and full runs land in the same
+  folder. Without it, each run creates its own timestamped folder.
+
+  Optional, when you know which brand is being impersonated - it enables
+  the automatic typosquat check in stage 1:
+  export BRAND_DOMAIN=microsoft.com
+
+---------------------------------------------------------------------------
+ HOW MUCH TO TOUCH THE TARGET
+---------------------------------------------------------------------------
+  export TRIAGE_FETCH=full        # default: fetch from the target
+  export TRIAGE_FETCH=no-touch    # send the target nothing; OSINT still runs
+  export TRIAGE_FETCH=offline     # no network at all
+
+  Use no-touch when you do not want the operator to know you looked. What a
+  policy suppresses is recorded, so a quiet run cannot look like a clean one.
+
+---------------------------------------------------------------------------
+ HAVE WE SEEN THIS BEFORE
+---------------------------------------------------------------------------
+  cd triage
+  ./search_cases.sh <hash, domain, or URL>
+  ./search_cases.sh --file ~/ir-cases/CASE-2026-001/indicators.txt
+  ./search_cases.sh --list         every case, newest first
+  ./search_cases.sh --stats         what the archive holds
+
+---------------------------------------------------------------------------
+ THE FOUR RULES
+---------------------------------------------------------------------------
+  1. Never click the link. Copy it as text from the raw source.
+  2. Never open the document. Not even "just to look."
+  3. Hash the original first. Work on a copy, in a local non-synced folder.
+  4. A clean result narrows risk. It never proves safety.
+
+---------------------------------------------------------------------------
+ LOOKING SOMETHING UP
+---------------------------------------------------------------------------
+  "What was that command again?"      reference/commands-by-filetype.txt
+  "Is this finding actually bad?"     reference/indicators.txt
+  "What is this tool, do I need it?"  reference/tool-index.txt
+
+---------------------------------------------------------------------------
+ PAST TRIAGE
+---------------------------------------------------------------------------
+  Static analysis was not enough       modules/detonation-lab/
+  A machine may have opened it         modules/macos-host-triage.txt
+  Turn indicators into detections      modules/detection-engineering.txt
+  Prove a detection actually fires     modules/detection-validation.md
+  General security toolbox             modules/cli-security-tools.md
+
+  Each module stands alone. modules/README.txt says which stage hands off
+  to which module, and why.
+
+---------------------------------------------------------------------------
+ THE FOLDER
+---------------------------------------------------------------------------
+  START-HERE.txt      this page
+  WORKFLOW.txt        the full guide: all four stages, in order, with reasoning
+  triage/             the workflow: scripts and procedures, stage by stage
+    setup/preflight.sh    make this machine ready
+    run_triage.sh         the whole chain, one command
+    search_cases.sh       have we seen this before?
+    test/run_tests.sh     prove it still works
+  reference/          lookup tables - commands, indicators, tools
+  modules/            stand-alone work that triage hands off to
+  tools/              optional docker services and GUI tools
+  _archive/           superseded originals + MANIFEST.txt explaining each
+
+  A working copy may also hold machine-local directories that are not part
+  of the toolkit - a Python virtualenv, checked-out upstream repos, GUI
+  application aliases. None of it is referenced by the four stages, and
+  none of it should be copied when sharing this folder.

@@ -1,0 +1,174 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 26 ACTIVE
+DIRECTORY AND LDAP INTEGRATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter explains how to securely administer Microsoft Active
+Directory (AD), LDAP, and LDAPS services across WireGuard tunnels while
+maintaining least-privilege access and protecting authentication
+infrastructure.
+
+===============================================================================
+2. COMMON USE CASES
+===============================================================================
+
+-   Remote Domain Controller administration
+-   Active Directory Users and Computers (ADUC)
+-   Group Policy Management
+-   DNS administration
+-   PowerShell remoting
+-   LDAP/LDAPS application access
+-   Certificate Services management
+
+===============================================================================
+3. RECOMMENDED NETWORK DESIGN
+===============================================================================
+
+Internet | Firewall | WireGuard Gateway | Management VLAN | +————————+ |
+Domain Controllers | | DNS | | Certificate Authority | | Management
+Servers | +————————+
+
+Do not expose Domain Controllers directly to the Internet.
+
+===============================================================================
+4. REQUIRED SERVICES
+===============================================================================
+
+Typical ports
+
+53 DNS 88 Kerberos 123 NTP 135 RPC Endpoint Mapper 389 LDAP 445 SMB 464
+Kerberos Password Change 636 LDAPS 3268 Global Catalog 3269 Global
+Catalog SSL 9389 Active Directory Web Services
+
+Only allow ports required for administrative tasks.
+
+===============================================================================
+5. FIREWALL EXAMPLES
+===============================================================================
+
+DNS
+
+iptables -A FORWARD -i wg0 -p udp –dport 53 -j ACCEPT
+
+LDAPS
+
+iptables -A FORWARD -i wg0 -p tcp –dport 636 -j ACCEPT
+
+Kerberos
+
+iptables -A FORWARD -i wg0 -p tcp –dport 88 -j ACCEPT iptables -A
+FORWARD -i wg0 -p udp –dport 88 -j ACCEPT
+
+===============================================================================
+6. DNS CONSIDERATIONS
+===============================================================================
+
+VPN clients should use internal AD DNS servers.
+
+Validate
+
+nslookup dc01.example.local nslookup _ldap._tcp.dc._msdcs.example.local
+
+Incorrect DNS is one of the most common causes of AD administration
+failures.
+
+===============================================================================
+7. LDAPS
+===============================================================================
+
+Verify certificate
+
+openssl s_client -connect dc01.example.local:636
+
+Check
+
+-   Certificate validity
+-   Trusted CA
+-   Hostname match
+-   Expiration
+
+===============================================================================
+8. GROUP POLICY
+===============================================================================
+
+Administer GPOs over the VPN using:
+
+-   Group Policy Management Console
+-   RSAT
+-   PowerShell
+
+Verify SYSVOL and NETLOGON access before troubleshooting GPO
+replication.
+
+===============================================================================
+9. VALIDATION
+===============================================================================
+
+Check VPN
+
+wg show
+
+DNS
+
+nslookup dc01.example.local
+
+LDAP
+
+ldapsearch -x -H ldap://dc01.example.local
+
+LDAPS
+
+openssl s_client -connect dc01.example.local:636
+
+PowerShell
+
+Test-NetConnection dc01.example.local -Port 636
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Cannot join domain
+
+-   DNS
+-   Time synchronization
+-   Firewall
+-   Kerberos
+
+LDAPS fails
+
+-   Certificate
+-   CA trust
+-   Firewall
+-   Service status
+
+Authentication slow
+
+-   DNS
+-   Site configuration
+-   Replication
+-   Latency
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Restrict VPN access to management networks.
+-   Use LDAPS whenever possible.
+-   Keep time synchronized.
+-   Monitor Domain Controllers.
+-   Protect Certificate Authorities.
+-   Audit privileged access.
+-   Review firewall rules regularly.
+
+===============================================================================
+12. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] VPN operational [ ] Internal DNS configured [ ] LDAP reachable [ ]
+LDAPS validated [ ] GPO administration tested [ ] Firewall verified [ ]
+Monitoring enabled [ ] Documentation updated
+
+END OF CHAPTER 26

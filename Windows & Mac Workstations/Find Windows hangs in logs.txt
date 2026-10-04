@@ -1,0 +1,36 @@
+Find hangs in logs To investigate why a Windows Server 2019 hung during a reboot, you’ll want to check specific logs in the Windows Event Viewer, which records system events, including those related to shutdowns, startups, and crashes. Here’s where to look:
+Key Logs to Check
+System Log
+Location: Event Viewer > Windows Logs > System
+What to Look For: This log contains events related to system processes, drivers, and services. Look for errors or warnings around the time of the reboot. Common event IDs to check:
+Event ID 41 (Kernel-Power): Indicates an unexpected shutdown or restart (e.g., the system stopped responding and rebooted without cleanly shutting down).
+Event ID 6008: Logged if the previous shutdown was unexpected.
+Event ID 1074: Indicates a shutdown or restart initiated by a user or process, which might give clues if something triggered it intentionally.
+Event ID 1001 (BugCheck): Suggests a crash dump was saved, meaning the system might have blue-screened or hung due to a critical error.
+Application Log
+Location: Event Viewer > Windows Logs > Application
+What to Look For: Errors from applications or services that might have interfered with the shutdown/reboot process. For example, a service failing to stop gracefully could cause a hang.
+Setup Log
+Location: Event Viewer > Windows Logs > Setup
+What to Look For: If the hang occurred during an update or installation process during reboot, this log might contain relevant details.
+Custom Views > Server Roles or Operational Logs
+Location: Event Viewer > Custom Views or Application and Services Logs
+What to Look For: If your server has specific roles (e.g., Hyper-V, IIS), check the operational logs under “Application and Services Logs” for role-specific issues that might have caused the hang.
+Crash Dumps (if available)
+Location: Not in Event Viewer, but check C:\Windows\Minidump or %SystemRoot%\MEMORY.DMP
+What to Look For: If a crash dump was generated (see Event ID 1001 in System Log), you can analyze it with tools like WinDbg or BlueScreenView to pinpoint the driver or process responsible.
+Steps to Investigate
+Open Event Viewer:
+Press Win + R, type eventvwr.msc, and hit Enter.
+Filter by Time:
+In each log, use the “Filter Current Log” option to narrow down events to the time of the reboot/hang.
+Look for Critical/Warning/Error Events:
+Focus on entries marked with red (Critical/Error) or yellow (Warning) icons.
+Correlate Timestamps:
+Match the time of the hang (if known) with events in the logs to identify what was happening.
+Common Causes to Watch For
+Driver Issues: Look for driver-related errors (e.g., DRIVER_POWER_STATE_FAILURE in a dump or log).
+Pending Updates: A stuck update might be logged in the Setup log or as a service timeout.
+Service Timeouts: Services that fail to stop within the timeout period (default is 30 seconds) can cause hangs—check for “service control” errors.
+Hardware Issues: Disk or memory failures might show up as I/O errors or BugCheck events.
+If you have a specific timestamp or suspect a particular component (e.g., a driver or update), let me know, and I can guide you further!

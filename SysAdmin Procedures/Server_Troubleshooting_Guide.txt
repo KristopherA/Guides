@@ -1,0 +1,1276 @@
+================================================================================
+  SERVER TROUBLESHOOTING GUIDE
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+
+HOW TO USE THIS GUIDE
+  Each section follows a diagnostic pattern:
+    SYMPTOMS → QUICK CHECKS → DIAGNOSIS STEPS → FIX → VERIFY
+
+  Start at the Quick Checks for any issue — they are ordered by likelihood.
+  Commands prefixed with # are comments explaining what to look for.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+  1.  Server Won't Boot (Ubuntu)
+  2.  Service Crash / Won't Start
+  3.  High CPU Usage
+  4.  High Memory / OOM Kills
+  5.  Disk Full
+  6.  High Load / Server Unresponsive
+  7.  Network Connectivity Loss
+  8.  SSH: Cannot Connect
+  9.  DNS Resolution Failures
+  10. AD Authentication Failures (Ubuntu / SSSD)
+  11. SSL/TLS Certificate Errors
+  12. NTP / Time Sync Issues
+  13. Permission and sudo Failures
+  14. Replication Failures (Active Directory)
+  15. macOS: Cannot Connect to Domain / AD Issues
+  16. Kernel Panic / OOM Crash (Ubuntu)
+  17. Cron / Scheduled Task Not Running
+  18. Package Manager Broken (apt)
+  19. Firewall Blocking Legitimate Traffic
+  20. Log Rotation / Disk Eaten by Logs
+
+
+================================================================================
+1. SERVER WON'T BOOT (Ubuntu)
+================================================================================
+
+SYMPTOMS: Server doesn't respond after reboot. Console shows kernel panic, GRUB
+error, or drops to emergency/maintenance shell.
+
+QUICK CHECKS
+  # Check if server is reachable at all
+  ping -c4 server.example.com
+  # Try IPMI/iDRAC/iLO out-of-band console if available
+  # Check hypervisor console if VM
+
+GRUB RECOVERY (access via console)
+  1. Reboot and hold Shift at GRUB menu
+  2. Select "Advanced options" → previous kernel version
+  3. If that boots: the new kernel is broken
+     sudo apt list --installed | grep linux-image
+     sudo apt remove linux-image-6.x.x-xx-generic  # remove broken kernel
+
+FILESYSTEM CHECK (emergency shell)
+  # If dropped to emergency shell, filesystem may be corrupt
+  journalctl -xb -p err --no-pager
+  # Force fsck on next boot (safe flag)
+  sudo touch /forcefsck && sudo reboot
+  # Or manually:
+  sudo fsck -y /dev/sda2   # replace with your root partition
+
+BOOT INTO RECOVERY MODE
+  1. GRUB → Advanced → Recovery Mode
+  2. Select "root" — Drop to root shell
+  3. Mount filesystem read-write:
+     mount -o remount,rw /
+  4. Diagnose then reboot:
+     journalctl -b -p err --no-pager | tail -50
+
+FSTAB ERROR (boot hangs on "waiting for /dev/...")
+  # Boot recovery, then:
+  nano /etc/fstab
+  # Comment out the offending line (wrong UUID or missing device)
+  # Find correct UUIDs:
+  blkid
+
+CHECK VERIFY (after boot)
+  systemctl --failed
+  dmesg | grep -i error | tail -20
+
+
+================================================================================
+2. SERVICE CRASH / WON'T START
+================================================================================
+
+SYMPTOMS: Service returns failed status. Requests return 502/503. App not responding.
+
+QUICK CHECKS
+  # Check if service is actually running
+  systemctl status nginx
+
+  # Last 50 log lines for the service
+  sudo journalctl -u nginx -n 50 --no-pager
+
+  # Did the service ever start successfully?
+  sudo journalctl -u nginx --since "1 hour ago" | grep -i "start\|fail\|error\|killed"
+
+DIAGNOSIS STEPS
+
+  Step 1 — Check exit code and reason
+    sudo systemctl status nginx
+    # Look for: "Exit Code:", "Signal:", "Result: exit-code"
+    # "killed" = OOM killer or signal 9 = external kill
+    # "exit-code" = application error (check logs)
+
+  Step 2 — Check full journal with priority
+    sudo journalctl -u nginx -p err -b --no-pager
+
+  Step 3 — Check config syntax (service-dependent)
+    sudo nginx -t               # nginx
+    sudo apache2ctl configtest  # apache
+    sudo sshd -t                # ssh
+    sudo named-checkconf        # bind DNS
+
+  Step 4 — Check port conflicts (another process on same port)
+    sudo ss -tlnp | grep :80
+    # If another PID is listed, find what it is:
+    sudo ss -tlnp | grep :80 | awk '{print $6}' | grep -oP 'pid=\K[0-9]+'
+    sudo ps -p <PID> -o comm=
+
+  Step 5 — Check for missing files/directories
+    # Config file exist?
+    ls -la /etc/nginx/nginx.conf
+    # Log directory writable?
+    ls -la /var/log/nginx/
+
+  Step 6 — Check resource limits
+    sudo journalctl -u nginx | grep -i "limit\|ulimit\|too many open"
+    cat /proc/$(pgrep nginx | head -1)/limits 2>/dev/null
+
+FIXES
+  # Bad config — fix and reload
+  sudo nano /etc/nginx/nginx.conf && sudo nginx -t && sudo systemctl reload nginx
+
+  # Port conflict — find and stop conflicting service
+  sudo fuser -k 80/tcp   # forcefully free port 80
+
+  # OOM killed — see Section 4
+
+  # Service keeps crashing — add restart policy to unit file
+  sudo systemctl edit nginx
+  # Add under [Service]:
+  # Restart=on-failure
+  # RestartSec=5s
+  sudo systemctl daemon-reload && sudo systemctl restart nginx
+
+VERIFY
+  systemctl status nginx
+  curl -I http://localhost
+
+
+================================================================================
+3. HIGH CPU USAGE
+================================================================================
+
+SYMPTOMS: Server slow to respond. Load average high. Users complain of timeouts.
+
+QUICK CHECKS
+  # Instant overview — top CPU consumers
+  ps -eo pid,ppid,user,comm,%cpu --sort=-%cpu | head -15
+
+  # Load average (1min/5min/15min)
+  uptime
+  # Rule of thumb: if 1min >> 15min, it's a spike; if all high, sustained issue
+
+DIAGNOSIS STEPS
+
+  Step 1 — Identify the culprit process
+    top -bn1 | head -25
+    # or for a live view:
+    htop
+
+  Step 2 — Check if it's a loop (100% one core) or spread across cores
+    top -bn1 | grep "^%Cpu"
+    # "us" = user space, "sy" = kernel, "wa" = I/O wait
+    # High "wa" = disk I/O is the real bottleneck, not CPU (see Section 6)
+
+  Step 3 — Check what the process is doing
+    sudo strace -p <PID> -c -f 2>&1 | head -30   # system calls summary
+    sudo lsof -p <PID>                             # open files/connections
+
+  Step 4 — Check for runaway processes (zombie, defunct)
+    ps aux | grep 'Z'
+
+  Step 5 — Check for crypto miners or unexpected processes
+    ps -eo comm --sort=-%cpu | head -10
+    # Check against known installed software; anything unfamiliar is suspicious
+    sudo find /tmp /var/tmp -executable -type f 2>/dev/null
+
+FIXES
+  # Kill runaway process gracefully then forcefully
+  sudo kill -15 <PID>   # SIGTERM
+  sudo kill -9 <PID>    # SIGKILL if still running
+
+  # Limit a service's CPU usage (add to systemd unit [Service])
+  CPUQuota=50%   # cap at 50% of one core
+  sudo systemctl daemon-reload && sudo systemctl restart servicename
+
+  # Nice a process (lower priority)
+  sudo renice 10 -p <PID>
+
+VERIFY
+  uptime   # load should drop within 1-2 minutes
+  ps -eo pid,comm,%cpu --sort=-%cpu | head -5
+
+
+================================================================================
+4. HIGH MEMORY / OOM KILLS
+================================================================================
+
+SYMPTOMS: Services randomly crash/restart. "Out of memory: Kill process" in logs.
+Server sluggish. Swap full.
+
+QUICK CHECKS
+  free -h
+  sudo swapon --show
+  # Check OOM kills
+  sudo dmesg | grep -i "oom\|out of memory\|killed process" | tail -20
+  sudo journalctl -k | grep -i "oom" | tail -20
+
+DIAGNOSIS STEPS
+
+  Step 1 — Find memory hogs
+    ps -eo pid,user,comm,%mem,rss --sort=-%mem | head -15
+    # RSS is resident set size in KB
+
+  Step 2 — Check what was killed and when
+    sudo journalctl -k --since "24 hours ago" | grep -i "killed\|oom"
+
+  Step 3 — Check for memory leaks (process growing over time)
+    # Watch memory of a PID every 10 seconds
+    watch -n 10 'ps -o pid,rss,vsz,comm -p <PID>'
+
+  Step 4 — Check OOM score (higher = more likely to be killed)
+    cat /proc/<PID>/oom_score
+
+  Step 5 — Check memory commit ratio
+    cat /proc/meminfo | grep -E "CommitLimit|Committed_AS"
+
+FIXES
+  # Protect a critical service from OOM killer
+  echo -1000 | sudo tee /proc/$(pgrep nginx | head -1)/oom_score_adj
+
+  # Make OOM protection persistent (add to systemd unit [Service])
+  OOMScoreAdjust=-900
+  sudo systemctl daemon-reload
+
+  # Add swap (temporary relief — not a permanent fix)
+  sudo fallocate -l 4G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  # Make persistent: add to /etc/fstab:
+  # /swapfile none swap sw 0 0
+
+  # Tune vm.overcommit (less aggressive memory allocation)
+  echo 'vm.overcommit_memory = 1' | sudo tee -a /etc/sysctl.d/99-memory.conf
+  sudo sysctl -p /etc/sysctl.d/99-memory.conf
+
+VERIFY
+  free -h   # confirm swap and available memory
+  sudo dmesg | grep oom | tail -5   # no new OOM kills
+
+
+================================================================================
+5. DISK FULL
+================================================================================
+
+SYMPTOMS: Services fail to write logs. Databases crash. apt/writes return
+"No space left on device".
+
+QUICK CHECKS
+  df -h        # find which filesystem is full
+  df -hi       # check inode usage (can be full even with space available)
+
+  # If inodes full:
+  df -i | awk 'NR>1 && $5+0 >= 90'
+
+DIAGNOSIS STEPS
+
+  Step 1 — Find largest directories
+    sudo du -hx --max-depth=3 / 2>/dev/null | sort -rh | head -20
+
+  Step 2 — Find largest individual files
+    sudo find / -xdev -size +500M -exec ls -lh {} \; 2>/dev/null | sort -k5 -rh | head -10
+
+  Step 3 — Check for deleted files still held open by processes (common trap)
+    sudo lsof +L1 | awk '{print $NF, $1, $2}' | sort -rh | head -10
+    # Files shown here are "deleted" but still consuming space
+    # Restarting the holding process will free the space
+
+  Step 4 — Check journal log size
+    sudo journalctl --disk-usage
+
+  Step 5 — Check for old package files
+    sudo apt-get -s autoremove 2>/dev/null | grep "will be removed"
+    du -sh /var/cache/apt/archives/
+
+FIXES (ordered by safety)
+
+  # Safe: Clear old apt cache
+  sudo apt clean && sudo apt autoremove -y
+
+  # Safe: Truncate journal to max 500MB
+  sudo journalctl --vacuum-size=500M
+  sudo journalctl --vacuum-time=7d
+
+  # Safe: Remove old kernels (keep current + 1 previous)
+  sudo apt autoremove --purge -y
+
+  # Safe: Clear temp files older than 7 days
+  sudo find /tmp -mtime +7 -delete 2>/dev/null
+  sudo find /var/tmp -mtime +7 -delete 2>/dev/null
+
+  # Restart processes holding deleted file handles
+  sudo lsof +L1 | awk 'NR>1{print $2}' | sort -u | xargs -I{} sudo kill -HUP {}
+
+  # If log files are massive
+  sudo truncate -s 0 /var/log/application.log   # zero out; don't delete!
+
+  # Emergency: Find and remove core dumps
+  sudo find / -xdev -name "core" -o -name "*.core" 2>/dev/null | head -10
+
+VERIFY
+  df -h   # space should be reclaimed
+  # Test writes:
+  touch /var/test-write && rm /var/test-write && echo "Write OK"
+
+
+================================================================================
+6. HIGH LOAD / SERVER UNRESPONSIVE
+================================================================================
+
+SYMPTOMS: SSH connects slowly or times out. Commands take seconds to respond.
+Load average > number of CPU cores.
+
+QUICK CHECKS
+  # Number of CPU cores
+  nproc
+  # Current load (compare 1min load to core count)
+  uptime
+  # Quick snapshot of process states
+  ps aux | awk '{print $8}' | sort | uniq -c | sort -rn
+  # D = uninterruptible sleep (I/O wait) — this is the usual culprit
+
+DIAGNOSIS STEPS
+
+  Step 1 — Determine if CPU-bound or I/O-bound
+    top -bn1 | head -5
+    # "wa" (I/O wait) > 20% = disk I/O bottleneck
+    # "us" (user) + "sy" (system) > 90% = CPU bottleneck
+
+  Step 2 — I/O-bound: find what's hammering disk
+    sudo iotop -o -P -d 1 -n 5
+    # Shows real-time disk read/write per process
+
+  Step 3 — I/O-bound: check for disk errors
+    sudo dmesg | grep -iE "error|ata|reset|timeout" | tail -20
+    sudo smartctl -H /dev/sda
+
+  Step 4 — Check for stuck NFS/remote mounts (common D-state cause)
+    mount | grep nfs
+    # Hung NFS creates D-state processes that inflate load
+    cat /proc/mounts | grep nfs
+    # Check if NFS server is reachable:
+    showmount -e nfs-server.example.com
+
+  Step 5 — Check for runaway forks / fork bomb
+    ps aux | wc -l   # total process count; normal < 300; bomb = thousands
+
+FIXES
+  # Kill top I/O consumer (carefully)
+  sudo kill -15 <PID>
+
+  # Lazy unmount a hung NFS mount
+  sudo umount -l /mnt/nfs-share
+
+  # Emergency: if server is unresponsive over SSH, use SysRq
+  # (requires console/IPMI access):
+  echo b | sudo tee /proc/sysrq-trigger   # immediate reboot (last resort)
+  echo s | sudo tee /proc/sysrq-trigger   # sync filesystems first
+
+VERIFY
+  uptime   # load average dropping
+  iotop -o -P -n 1   # I/O should normalize
+
+
+================================================================================
+7. NETWORK CONNECTIVITY LOSS
+================================================================================
+
+SYMPTOMS: Cannot reach the server. Server cannot reach the internet or internal hosts.
+
+QUICK CHECKS (run from the server if you have console access)
+  # Is the interface up?
+  ip link show
+  # Does it have an IP?
+  ip addr show
+  # Default gateway present?
+  ip route show | grep default
+  # Can we reach the gateway?
+  ping -c4 $(ip route | grep default | awk '{print $3}')
+
+DIAGNOSIS STEPS
+
+  Step 1 — Check interface state
+    ip link show
+    # "state DOWN" = link down (cable/switch issue or interface disabled)
+    # "NO-CARRIER" = no physical link
+    sudo ip link set ens3 up   # bring it up if down
+
+  Step 2 — Check for IP address (DHCP failure?)
+    ip addr show ens3
+    # If no inet address: DHCP failed
+    sudo dhclient -v ens3            # request new DHCP lease
+    # Or re-apply netplan:
+    sudo netplan apply
+
+  Step 3 — Check Netplan/network config
+    cat /etc/netplan/*.yaml
+    sudo netplan generate --debug 2>&1 | tail -20
+
+  Step 4 — Check routing
+    ip route show
+    traceroute -n 8.8.8.8   # where does it stop?
+    traceroute -n 10.0.0.53  # can we reach internal DNS?
+
+  Step 5 — DNS vs network (is it just name resolution?)
+    ping -c4 8.8.8.8          # IP works but...
+    ping -c4 google.com       # name fails = DNS issue (see Section 9)
+
+  Step 6 — Check if UFW is blocking
+    sudo ufw status
+    sudo iptables -L -n -v | head -30
+
+  Step 7 — Check for duplicate IP
+    sudo arping -D -I ens3 10.0.1.10 -c 3
+    # If response received: another host has the same IP
+
+FIXES
+  # Re-apply network config
+  sudo netplan apply
+
+  # Restart systemd-networkd
+  sudo systemctl restart systemd-networkd
+
+  # Hard restart networking
+  sudo systemctl restart networking
+
+  # If NIC bonding is used — check bond status
+  cat /proc/net/bonding/bond0
+
+VERIFY
+  ping -c4 8.8.8.8 && ping -c4 google.com
+  ss -tlnp   # confirm services are still listening
+
+
+================================================================================
+8. SSH: CANNOT CONNECT
+================================================================================
+
+SYMPTOMS: "Connection refused", "Connection timed out", or "Permission denied"
+when connecting via SSH.
+
+QUICK CHECKS
+  # From your workstation:
+  nc -zv server.example.com 22   # is port 22 reachable?
+  ssh -vvv ubuntu@server.example.com 2>&1 | head -40   # verbose SSH debug
+
+DIAGNOSIS — by error type
+
+  "Connection refused"
+    # SSH daemon not running OR wrong port
+    # Requires console access — run on the server:
+    sudo systemctl status ssh
+    sudo systemctl start ssh
+    # Check if running on non-standard port:
+    sudo ss -tlnp | grep sshd
+
+  "Connection timed out"
+    # Firewall dropping packets
+    # Check UFW:
+    sudo ufw status | grep 22
+    # Check if rule allows your source IP:
+    sudo ufw status | grep -E "22|SSH"
+    # Temporarily allow all for diagnosis:
+    sudo ufw allow 22/tcp
+
+  "Permission denied (publickey)"
+    # Key authentication failing
+    # On the server, check:
+    ls -la ~/.ssh/authorized_keys         # file must exist
+    stat ~/.ssh                           # must be 700
+    stat ~/.ssh/authorized_keys           # must be 600
+    # Fix permissions:
+    chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
+    # Check sshd allows pubkey auth:
+    sudo grep -i "PubkeyAuthentication\|AuthorizedKeysFile" /etc/ssh/sshd_config
+
+  "Host key verification failed"
+    # Server's host key changed (reinstalled, or MITM warning)
+    # If you're certain the server is legitimate:
+    ssh-keygen -R server.example.com
+    ssh ubuntu@server.example.com   # re-accept new key
+
+  "Too many authentication failures"
+    # SSH agent is offering too many keys
+    ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 ubuntu@server.example.com
+
+  SSH locked yourself out? (use console/IPMI)
+    # Re-enable password auth temporarily:
+    sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sudo systemctl restart ssh
+
+VERIFY
+  ssh ubuntu@server.example.com "whoami && uptime"
+
+
+================================================================================
+9. DNS RESOLUTION FAILURES
+================================================================================
+
+SYMPTOMS: "Name or service not known". Can ping IPs but not hostnames. Intermittent
+connection failures to named hosts.
+
+QUICK CHECKS
+  # Can we resolve at all?
+  dig google.com @8.8.8.8       # test against known-good external resolver
+  dig example.com @10.0.0.53    # test against internal DNS
+  resolvectl status              # show current DNS configuration (Ubuntu)
+
+DIAGNOSIS STEPS
+
+  Step 1 — Check what DNS server is being used
+    resolvectl status | grep "DNS Servers"
+    cat /etc/resolv.conf         # should point to 127.0.0.53 (systemd-resolved)
+    # systemd-resolved then forwards to the real DNS servers above
+
+  Step 2 — Test specific record types
+    dig A server.example.com @10.0.0.53
+    dig MX example.com @10.0.0.53
+    dig SRV _ldap._tcp.example.com @10.0.0.53   # AD-specific
+    # NXDOMAIN = record doesn't exist
+    # SERVFAIL = DNS server error
+    # No response = DNS server unreachable
+
+  Step 3 — Check systemd-resolved service
+    sudo systemctl status systemd-resolved
+    sudo journalctl -u systemd-resolved -n 30 --no-pager
+
+  Step 4 — Test DNS server directly
+    nc -zvu 10.0.0.53 53    # UDP
+    nc -zv 10.0.0.53 53     # TCP
+
+  Step 5 — Check /etc/hosts overrides
+    grep server.example.com /etc/hosts
+
+  Step 6 — Check for split-horizon DNS issues (AD domains)
+    dig _ldap._tcp.example.com SRV   # AD needs to return domain controller SRVs
+
+FIXES
+  # Flush DNS cache (systemd-resolved)
+  sudo resolvectl flush-caches
+  sudo systemctl restart systemd-resolved
+
+  # Override DNS temporarily
+  sudo resolvectl dns ens3 10.0.0.53 8.8.8.8
+
+  # If /etc/resolv.conf is broken/overwritten
+  sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
+  # For AD-joined machines: ensure AD DNS is first
+  sudo netplan set ethernets.ens3.nameservers.addresses='[10.0.0.53,10.0.0.54]'
+  sudo netplan apply
+
+VERIFY
+  dig example.com +short
+  getent hosts server.example.com   # confirms nsswitch.conf resolves correctly
+
+
+================================================================================
+10. AD AUTHENTICATION FAILURES (Ubuntu / SSSD)
+================================================================================
+
+SYMPTOMS: Domain users cannot SSH in. "Permission denied". "getent passwd jsmith"
+returns nothing. sudo fails for domain users.
+
+QUICK CHECKS
+  realm list                        # check domain join status
+  id administrator@example.com      # test a known-good AD account
+  sudo systemctl status sssd
+  sudo journalctl -u sssd -n 50 --no-pager
+
+DIAGNOSIS STEPS
+
+  Step 1 — Check SSSD service and cache
+    sudo systemctl status sssd
+    # If failed: check config permissions (must be 600, owned by root)
+    sudo ls -la /etc/sssd/sssd.conf
+
+  Step 2 — Enable SSSD debug logging
+    sudo sed -i '/^\[domain/a debug_level = 6' /etc/sssd/sssd.conf
+    sudo systemctl restart sssd
+    sudo tail -f /var/log/sssd/sssd_example.com.log
+
+  Step 3 — Check Kerberos connectivity
+    kinit administrator@EXAMPLE.COM
+    klist
+    # Failure here = Kerberos/AD issue, not SSSD
+
+  Step 4 — Check time sync (Kerberos fails if >5 min drift)
+    timedatectl
+    ntpdate -q dc01.example.com
+
+  Step 5 — Check access control settings in sssd.conf
+    sudo grep -i "access_provider\|ad_access_filter\|simple_allow" /etc/sssd/sssd.conf
+    # If ad_access_filter is set, verify the user is in the specified group
+
+  Step 6 — Check SSH allows PAM auth
+    sudo grep -i "UsePAM\|AuthorizedKeysCommand" /etc/ssh/sshd_config
+
+FIXES
+  # Clear SSSD cache (resolves stale credentials/groups)
+  sudo sss_cache -E && sudo systemctl restart sssd
+
+  # Rejoin the domain (if realm list shows nothing)
+  sudo realm leave example.com
+  sudo realm join --user=administrator example.com
+
+  # Fix sssd.conf permissions
+  sudo chown root:root /etc/sssd/sssd.conf && sudo chmod 600 /etc/sssd/sssd.conf
+  sudo systemctl restart sssd
+
+  # Fix time drift
+  sudo systemctl restart systemd-timesyncd
+  timedatectl set-ntp true
+
+  # Ensure PAM creates home directories on first login
+  echo "session required pam_mkhomedir.so skel=/etc/skel/ umask=0022" | \
+    sudo tee -a /etc/pam.d/common-session
+
+VERIFY
+  id jsmith@example.com        # should return uid, gid, groups
+  su -l jsmith@example.com -s /bin/bash -c "whoami"
+
+
+================================================================================
+11. SSL/TLS CERTIFICATE ERRORS
+================================================================================
+
+SYMPTOMS: "SSL certificate problem: certificate has expired". Browser shows
+security warning. Services refuse to start due to cert errors.
+
+QUICK CHECKS
+  # Check expiry of a remote certificate
+  echo | openssl s_client -connect example.com:443 2>/dev/null | openssl x509 -noout -dates
+  # Check local cert file
+  openssl x509 -noout -dates -in /etc/ssl/certs/example.com.crt
+
+DIAGNOSIS — by error type
+
+  "Certificate has expired"
+    # Renew Let's Encrypt
+    sudo certbot renew --cert-name example.com --force-renewal
+    sudo systemctl reload nginx
+
+  "Certificate is not trusted" / "self signed certificate in chain"
+    # Internal CA not installed on client
+    # Ubuntu client:
+    sudo cp internal-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
+    # macOS client:
+    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain internal-ca.crt
+
+  "Certificate name mismatch" (wrong CN/SAN)
+    # Check what names the cert covers:
+    openssl x509 -text -noout -in cert.crt | grep -A1 "Subject Alternative Name"
+    openssl x509 -noout -subject -in cert.crt
+    # Must match hostname in URL exactly. Obtain new cert with correct SANs.
+
+  "Private key does not match certificate"
+    # Modulus checksums must match:
+    openssl x509 -noout -modulus -in cert.crt | md5sum
+    openssl rsa  -noout -modulus -in cert.key | md5sum
+
+  Service won't start (nginx config error with cert)
+    sudo nginx -t 2>&1   # shows exact config/cert error line
+
+  Let's Encrypt rate limited
+    # Check status at: https://letsencrypt.org/docs/rate-limits/
+    # Use staging for testing:
+    sudo certbot --staging --nginx -d example.com
+
+VERIFY
+  # Test full certificate chain
+  openssl s_client -connect example.com:443 -showcerts 2>/dev/null | grep -E "subject|issuer|notAfter"
+  curl -I https://example.com   # should return 200, no cert warnings
+
+
+================================================================================
+12. NTP / TIME SYNC ISSUES
+================================================================================
+
+SYMPTOMS: Kerberos authentication fails. Log timestamps wrong. AD replication fails.
+"Clock skew too great" errors.
+
+QUICK CHECKS
+  timedatectl                   # current time, NTP status, timezone
+  timedatectl show              # machine-readable status
+  ntpdate -q dc01.example.com   # compare to AD domain controller
+
+DIAGNOSIS STEPS
+
+  Step 1 — Check if NTP is synced
+    timedatectl | grep "NTP synchronized"
+    # "yes" = synced; "no" = not synced
+
+  Step 2 — Check timesyncd status and sources
+    sudo systemctl status systemd-timesyncd
+    sudo journalctl -u systemd-timesyncd -n 30 --no-pager
+    # Look for "timed out", "no server reachable"
+
+  Step 3 — Check NTP server reachability
+    nc -zvu 10.0.0.53 123    # NTP is UDP port 123
+    ntpdate -q 10.0.0.53     # check offset
+
+  Step 4 — Check configured NTP servers
+    cat /etc/systemd/timesyncd.conf
+    # Or:
+    timedatectl show-timesync
+
+  Step 5 — Check timezone is correct
+    timedatectl | grep "Time zone"
+
+FIXES
+  # Enable NTP and resync
+  sudo timedatectl set-ntp true
+  sudo systemctl restart systemd-timesyncd
+
+  # Force manual time sync (install ntpdate first if needed)
+  sudo apt install -y ntpdate
+  sudo ntpdate -u 10.0.0.53
+
+  # Set correct timezone
+  sudo timedatectl set-timezone America/New_York
+
+  # Configure NTP server in /etc/systemd/timesyncd.conf:
+  [Time]
+  NTP=dc01.example.com dc02.example.com
+  FallbackNTP=pool.ntp.org
+  sudo systemctl restart systemd-timesyncd
+
+  # Verify Kerberos skew (max 5 minutes from AD)
+  ntpdate -q dc01.example.com
+  # Offset must be < 300 seconds
+
+VERIFY
+  timedatectl | grep "NTP synchronized: yes"
+  date && ssh dc01.example.com "date"   # compare timestamps
+
+
+================================================================================
+13. PERMISSION AND SUDO FAILURES
+================================================================================
+
+SYMPTOMS: "Permission denied". "sudo: command not found". "user is not in sudoers".
+File operations fail unexpectedly.
+
+QUICK CHECKS
+  # Check file/directory ownership and permissions
+  ls -la /path/to/file
+  # Check user's groups
+  id username
+  # Check sudo configuration
+  sudo -l -U username
+
+DIAGNOSIS STEPS
+
+  Step 1 — Permission denied on a file
+    ls -la /path/to/file
+    # Check: is the user the owner? In the group? Are "other" permissions set?
+    stat /path/to/file   # more detail including ACLs
+    getfacl /path/to/file   # check extended ACLs
+
+  Step 2 — User not in sudoers
+    sudo grep -r "username\|%groupname" /etc/sudoers /etc/sudoers.d/
+    # Check their groups:
+    id username
+
+  Step 3 — Sudo works for some commands, not others
+    sudo -l -U username   # shows exactly what commands they can run
+
+  Step 4 — SELinux/AppArmor blocking (despite correct Unix permissions)
+    sudo aa-status | grep -i "enforce"
+    sudo journalctl -k | grep -i "apparmor\|denied" | tail -20
+    sudo dmesg | grep -i "apparmor" | tail -10
+
+FIXES
+  # Add user to sudo group
+  sudo usermod -aG sudo username
+
+  # Create a specific sudoers rule (safer than adding to sudo group)
+  echo "username ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nginx" | \
+    sudo tee /etc/sudoers.d/username-nginx
+  sudo chmod 440 /etc/sudoers.d/username-nginx
+
+  # Fix file ownership
+  sudo chown user:group /path/to/file
+
+  # Fix file permissions
+  sudo chmod 640 /path/to/file    # owner rw, group r, other none
+  sudo chmod 755 /path/to/dir     # owner rwx, group rx, other rx
+
+  # Fix recursive permissions (dangerous — check first)
+  find /var/www/html -type f -exec chmod 644 {} \;
+  find /var/www/html -type d -exec chmod 755 {} \;
+
+  # AppArmor: put a profile in complain mode (log but don't block)
+  sudo aa-complain /etc/apparmor.d/usr.sbin.nginx
+
+VERIFY
+  sudo -l -U username     # confirm sudo rules are correct
+  sudo -u username ls /restricted/path
+
+
+================================================================================
+14. REPLICATION FAILURES (ACTIVE DIRECTORY)
+================================================================================
+
+SYMPTOMS: Password changes not propagating. Users can log in on some DCs but not
+others. Objects missing on some domain controllers.
+
+QUICK CHECKS (run on a Domain Controller)
+  repadmin /replsummary
+  repadmin /showrepl
+  dcdiag /test:replications /v
+
+DIAGNOSIS STEPS
+
+  Step 1 — Check replication status
+    repadmin /replsummary
+    # Look for "FAILED" or high fail counts and "Last Success" times
+
+  Step 2 — View replication errors in detail
+    repadmin /showrepl * /csv | ConvertFrom-Csv | Where-Object {$_.'Number of Failures' -gt 0}
+
+  Step 3 — Check AD event log for replication errors
+    Get-EventLog -LogName "Directory Service" -Newest 20 -EntryType Error,Warning | Format-List
+
+  Step 4 — Common error codes:
+    # 1722 = RPC server unavailable (network/firewall between DCs)
+    # 1256 = Remote system not available (DC unreachable)
+    # 8606 = Insufficient attributes given to create an object (lingering objects)
+    # -2146893022 = Target principal name incorrect (time/Kerberos issue)
+
+  Step 5 — Check DNS (replication requires DCs to resolve each other by name)
+    nslookup dc02.example.com
+    nslookup -type=SRV _ldap._tcp.example.com
+
+  Step 6 — Check firewall (AD replication ports)
+    # Required ports between DCs: 135, 445, 49152-65535 (RPC dynamic), 389, 636, 3268, 88
+    Test-NetConnection dc02.example.com -Port 135
+    Test-NetConnection dc02.example.com -Port 389
+
+FIXES
+  # Force a replication sync from all partners
+  repadmin /syncall /AdeP
+
+  # Force sync with a specific DC
+  repadmin /replicate dc01 dc02 "DC=example,DC=com"
+
+  # Fix RPC connectivity (ensure service is running)
+  Get-Service -ComputerName dc02 -Name rpcss | Start-Service
+
+  # If DCs have time drift (Kerberos issue)
+  w32tm /resync /force   # on the problematic DC
+  w32tm /query /status
+
+  # Remove lingering objects (error 8606)
+  repadmin /removelingeringobjects dc02.example.com dc01.example.com "DC=example,DC=com"
+
+VERIFY
+  repadmin /replsummary
+  # All entries should show "Last Success" within recent minutes and 0 failures
+
+
+================================================================================
+15. macOS: CANNOT CONNECT TO DOMAIN / AD ISSUES
+================================================================================
+
+SYMPTOMS: Mac shows "Network accounts unavailable". Domain users can't log in.
+"There was a problem connecting to the server" at login.
+
+QUICK CHECKS
+  dscl /Active\ Directory/EXAMPLE/All\ Domains/ read / 2>/dev/null || echo "AD not bound"
+  dsconfigad -show
+  ping -c4 dc01.example.com
+
+DIAGNOSIS STEPS
+
+  Step 1 — Check domain bind status
+    dsconfigad -show
+    # Look for "Active Directory Domain:" and "Computer Account:"
+
+  Step 2 — Check Directory Services log
+    log show --predicate 'subsystem == "com.apple.DirectoryService"' --last 30m 2>/dev/null | tail -30
+
+  Step 3 — Check Kerberos ticket
+    klist
+    kinit administrator@EXAMPLE.COM
+
+  Step 4 — Check DNS (Mac must resolve DC)
+    dscacheutil -q host -a name dc01.example.com
+    nslookup -type=SRV _ldap._tcp.example.com
+
+  Step 5 — Check if machine password is stale (common after 30 days if policy requires it)
+    # Mac AD bind can break if computer account password expired in AD
+    # Check in AD:
+    Get-ADComputer -Identity "MACBOOK-01" -Properties PasswordLastSet | Select-Object Name,PasswordLastSet
+
+FIXES
+  # Unbind and rebind to domain
+  sudo dsconfigad -remove -force -u administrator -p "AdminPassword"
+  sudo dsconfigad -add example.com -username administrator -password "AdminPassword" -computer $(hostname -s) -ou "OU=Macs,DC=example,DC=com"
+
+  # Flush Directory Services cache
+  sudo dscacheutil -flushcache
+  sudo killall -HUP DirectoryService 2>/dev/null || sudo launchctl stop com.apple.DirectoryServices
+
+  # Reset computer account password in AD from Mac
+  sudo dsconfigad -passinterval 0   # disable auto password change
+  sudo dsconfigad -passinterval 30  # re-enable
+
+  # Fix DNS to point to AD DNS first
+  sudo networksetup -setdnsservers Wi-Fi 10.0.0.53 10.0.0.54
+
+VERIFY
+  id administrator@example.com   # returns uid/gid on success
+  dscl /Active\ Directory/EXAMPLE/All\ Domains/ read /Users/administrator
+
+
+================================================================================
+16. KERNEL PANIC / OOM CRASH (Ubuntu)
+================================================================================
+
+SYMPTOMS: Server reboots without warning. "kernel BUG at" or "Oops" in dmesg.
+Server unreachable after crash.
+
+QUICK CHECKS (after reboot)
+  # Did a crash dump get written?
+  ls -lh /var/crash/
+  # Check kernel messages from last boot
+  sudo journalctl -k -b -1 --no-pager | tail -50
+  # Check dmesg for hardware errors
+  sudo dmesg | grep -iE "MCE|machine check|hardware error|panic" | tail -20
+
+DIAGNOSIS STEPS
+
+  Step 1 — Identify crash type
+    sudo journalctl -k -b -1 | grep -iE "panic|BUG|oops|segfault|killed" | tail -20
+    # OOM kill: "Out of memory: Killed process" → see Section 4
+    # Kernel oops: hardware issue or kernel bug
+    # Segfault: application bug
+
+  Step 2 — Check hardware errors
+    sudo mcelog --client 2>/dev/null || sudo journalctl -k | grep -i "mce\|machine check"
+    sudo edac-util -s 4 2>/dev/null   # EDAC memory error detection
+
+  Step 3 — Check disk health (corrupt data can cause panics)
+    sudo smartctl -a /dev/sda | grep -E "SMART overall|Reallocated|Pending|Uncorrectable"
+
+  Step 4 — Check kernel version (known bugs?)
+    uname -r
+    # Check Ubuntu kernel changelogs: https://changelogs.ubuntu.com/changelogs/pool/main/l/linux/
+
+  Step 5 — Check if crash dump is available
+    sudo apt install -y crash linux-crashdump 2>/dev/null
+    ls /var/crash/*.crash 2>/dev/null
+
+FIXES
+  # If OOM-caused: see Section 4
+
+  # If hardware error (bad RAM): run memtest from GRUB
+    # Reboot → GRUB → Ubuntu memtest
+
+  # If specific driver/module causing panic: disable it
+    echo "blacklist faulty_module" | sudo tee /etc/modprobe.d/blacklist-faulty.conf
+    sudo update-initramfs -u
+
+  # If bad kernel update: boot previous kernel and pin working version
+    sudo apt-mark hold linux-image-$(uname -r)
+
+  # Enable crash dumps for future diagnosis
+    sudo apt install -y linux-crashdump
+    sudo systemctl enable kdump-tools
+
+VERIFY
+  uptime   # confirm stable uptime building up
+  sudo journalctl -k -b --no-pager | grep -c "error"   # baseline error count
+
+
+================================================================================
+17. CRON / SCHEDULED TASK NOT RUNNING
+================================================================================
+
+SYMPTOMS: Expected automated job didn't run. Backup not created. Report not sent.
+
+QUICK CHECKS
+  # Is cron running?
+  sudo systemctl status cron
+  # Check cron log
+  sudo grep CRON /var/log/syslog | tail -30
+  # Check for cron output (errors mailed to user by default)
+  sudo grep -i "cron\|CRON" /var/log/syslog | grep -i "error\|fail" | tail -20
+
+DIAGNOSIS STEPS
+
+  Step 1 — Verify the crontab entry is correct
+    crontab -l
+    sudo crontab -l   # root's crontab
+    cat /etc/cron.d/yourtask
+    # Validate schedule: https://crontab.guru
+
+  Step 2 — Check if cron ran at all
+    sudo grep CRON /var/log/syslog | grep "$(date '+%b %_d')"
+    # If no entries at expected time: cron didn't trigger (check schedule syntax)
+
+  Step 3 — Check if job ran but failed silently
+    sudo grep CRON /var/log/syslog | grep "scriptname"
+    # "CMD" = started; check for "FAILED" or mail output
+
+  Step 4 — Check for environment differences
+    # Cron has minimal environment — PATH is often the issue
+    # Run the command manually as the cron user:
+    sudo -u cronuser env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin /path/to/script.sh
+
+  Step 5 — Check permissions
+    ls -la /path/to/script.sh   # must be executable
+    # Script must be owned correctly and executable:
+    chmod +x /path/to/script.sh
+
+FIXES
+  # Add full PATH to crontab
+  0 2 * * * PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin /path/to/script.sh
+
+  # Redirect output to log file (never discard stderr)
+  0 2 * * * /path/to/script.sh >> /var/log/scriptname.log 2>&1
+
+  # Restart cron
+  sudo systemctl restart cron
+
+  # For systemd timers — check and re-enable
+  sudo systemctl status backup.timer
+  sudo systemctl enable --now backup.timer
+
+VERIFY
+  # Manually run the job as cron would:
+  sudo -u cronuser /path/to/script.sh && echo "Job ran OK"
+  # Then watch for it in syslog at next scheduled time:
+  sudo tail -f /var/log/syslog | grep CRON
+
+
+================================================================================
+18. PACKAGE MANAGER BROKEN (apt)
+================================================================================
+
+SYMPTOMS: "dpkg was interrupted", "Could not get lock", "sub-process /usr/bin/dpkg
+returned an error", "Unmet dependencies".
+
+QUICK CHECKS
+  sudo apt update 2>&1 | tail -10
+  sudo dpkg --audit 2>&1 | head -20
+
+FIXES (ordered by invasiveness)
+
+  Stale lock file (another apt process left a lock)
+    sudo rm /var/lib/dpkg/lock-frontend
+    sudo rm /var/lib/apt/lists/lock
+    sudo rm /var/cache/apt/archives/lock
+    sudo dpkg --configure -a
+
+  Interrupted dpkg installation
+    sudo dpkg --configure -a
+    sudo apt -f install
+
+  Unmet dependencies
+    sudo apt -f install                # auto-fix
+    sudo apt --fix-broken install
+
+  Corrupted package database
+    sudo apt clean
+    sudo rm -rf /var/lib/apt/lists/*
+    sudo apt update
+    sudo apt -f install
+
+  Package in bad state
+    sudo dpkg -P packagename   # purge specific broken package
+    sudo apt install packagename  # reinstall
+
+  Duplicate sources
+    sudo grep -r "^deb" /etc/apt/sources.list /etc/apt/sources.list.d/ | sort | uniq -d
+    # Remove duplicate lines from the file shown
+
+VERIFY
+  sudo apt update && sudo apt upgrade --dry-run
+
+
+================================================================================
+19. FIREWALL BLOCKING LEGITIMATE TRAFFIC
+================================================================================
+
+SYMPTOMS: Service is running and listening but external requests fail. Works from
+localhost but not remotely. "Connection refused" or timeout from outside.
+
+QUICK CHECKS
+  # Is the service actually listening?
+  sudo ss -tlnp | grep :443
+  # Is UFW enabled and what rules exist?
+  sudo ufw status numbered
+  # Test from the server itself (should work):
+  curl -I http://localhost
+  # Test from remote (should also work):
+  curl -I http://10.0.1.10
+
+DIAGNOSIS STEPS
+
+  Step 1 — Confirm service is listening on 0.0.0.0 (not just 127.0.0.1)
+    sudo ss -tlnp | grep :80
+    # "0.0.0.0:80" = listening on all interfaces (correct)
+    # "127.0.0.1:80" = only localhost — fix in app config, not firewall
+
+  Step 2 — Check UFW rules in order
+    sudo ufw status numbered
+    # Rules processed top to bottom; first match wins
+    # If a DENY appears before your ALLOW, traffic will be blocked
+
+  Step 3 — Test with UFW temporarily disabled (DIAGNOSTIC ONLY — re-enable immediately)
+    sudo ufw disable
+    curl -I http://10.0.1.10   # if this works: UFW is the problem
+    sudo ufw enable
+
+  Step 4 — Check iptables directly (UFW sits on top of iptables)
+    sudo iptables -L INPUT -n -v --line-numbers | head -30
+    # Look for DROP or REJECT rules before your ACCEPT
+
+  Step 5 — Check if cloud/VM security groups apply (AWS/Azure/GCP)
+    # These are separate from UFW; check your cloud console
+
+FIXES
+  # Allow a port
+  sudo ufw allow 443/tcp comment "HTTPS"
+
+  # Allow from specific subnet only
+  sudo ufw allow from 10.0.0.0/8 to any port 443
+
+  # Delete a blocking rule
+  sudo ufw status numbered
+  sudo ufw delete 5   # delete rule #5
+
+  # Reset UFW completely (WARNING: will allow all traffic)
+  sudo ufw reset
+  # Then re-add rules and re-enable
+
+  # Fix app listening on wrong interface (nginx example)
+  # In /etc/nginx/sites-available/default, ensure:
+  # listen 80 default_server;   (not listen 127.0.0.1:80)
+
+VERIFY
+  curl -vI https://server.example.com   # from external host
+  sudo ufw status numbered              # confirm rules are correct
+
+
+================================================================================
+20. LOG ROTATION / DISK EATEN BY LOGS
+================================================================================
+
+SYMPTOMS: /var/log is consuming all disk space. Ancient logs present. Logrotate
+not running. Journald filling disk.
+
+QUICK CHECKS
+  du -sh /var/log/
+  du -sh /var/log/* | sort -rh | head -10
+  sudo journalctl --disk-usage
+
+DIAGNOSIS STEPS
+
+  Step 1 — Find the largest log files
+    sudo find /var/log -name "*.log" -o -name "*.log.*" | xargs du -sh 2>/dev/null | sort -rh | head -15
+
+  Step 2 — Check if logrotate is running
+    sudo systemctl status logrotate.timer
+    sudo grep logrotate /var/log/syslog | tail -10
+
+  Step 3 — Check logrotate config for a specific service
+    cat /etc/logrotate.d/nginx
+
+  Step 4 — Check if a service is not using logrotate at all
+    ls -lh /var/log/application/   # logs still growing without rotation?
+
+  Step 5 — Check journald configuration
+    sudo cat /etc/systemd/journald.conf | grep -v "^#" | grep -v "^$"
+
+FIXES
+  # Free space immediately
+  sudo journalctl --vacuum-size=500M
+  sudo journalctl --vacuum-time=14d
+
+  # Configure journald limits persistently (/etc/systemd/journald.conf)
+  [Journal]
+  SystemMaxUse=2G
+  SystemMaxFileSize=200M
+  MaxRetentionSec=1month
+  sudo systemctl restart systemd-journald
+
+  # Run logrotate manually
+  sudo logrotate -f /etc/logrotate.conf
+  sudo logrotate -f /etc/logrotate.d/nginx   # single service
+
+  # Fix a missing logrotate config for a service (example)
+  sudo tee /etc/logrotate.d/myapp << 'EOF'
+  /var/log/myapp/*.log {
+      daily
+      rotate 14
+      compress
+      delaycompress
+      missingok
+      notifempty
+      sharedscripts
+      postrotate
+          systemctl reload myapp > /dev/null 2>&1 || true
+      endscript
+  }
+  EOF
+  sudo logrotate -d /etc/logrotate.d/myapp   # dry run to verify
+
+  # Truncate a single massive log (zero it out — DON'T delete if service has it open)
+  sudo truncate -s 0 /var/log/myapp/application.log
+
+VERIFY
+  df -h /var/log   # confirm space reclaimed
+  sudo logrotate -d /etc/logrotate.conf 2>&1 | grep "considering\|error" | head -20
+
+
+================================================================================
+APPENDIX: DIAGNOSTIC COMMAND QUICK REFERENCE
+================================================================================
+
+ISSUE                  FIRST COMMAND TO RUN
+─────────────────────  ──────────────────────────────────────────────────────
+Service won't start    sudo journalctl -u SERVICENAME -n 50 --no-pager
+High CPU               ps -eo pid,comm,%cpu --sort=-%cpu | head -10
+High memory            ps -eo pid,comm,%mem,rss --sort=-%mem | head -10
+Disk full              df -h && sudo du -hx / --max-depth=3 | sort -rh | head -10
+Disk full (inodes)     df -i
+High load/I/O          sudo iotop -o -P -d 1 -n 3
+Network down           ip addr show && ip route show
+Cannot SSH             nc -zv server.example.com 22
+DNS broken             dig google.com @8.8.8.8 && resolvectl status
+AD auth failing        realm list && id admin@example.com
+SSL cert issue         echo | openssl s_client -connect host:443 2>/dev/null | openssl x509 -noout -dates
+Time sync off          timedatectl && ntpdate -q dc01.example.com
+Firewall blocking      sudo ufw status numbered && sudo ss -tlnp
+Package manager stuck  sudo dpkg --configure -a && sudo apt -f install
+Cron not running       sudo grep CRON /var/log/syslog | tail -20
+Log disk eating space  sudo journalctl --disk-usage && du -sh /var/log/*
+
+================================================================================
+END OF DOCUMENT
+================================================================================

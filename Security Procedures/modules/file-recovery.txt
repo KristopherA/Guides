@@ -1,0 +1,233 @@
+LINUX DELETED FILE RECOVERY TOOLKIT
+===================================
+
+Purpose:
+Recover a deleted Linux file while a running process still has it open.
+
+Core idea:
+rm removes the filename from the directory tree, but if a process still has the file open, the kernel keeps the inode alive until the last file descriptor closes.
+
+Recovery window:
+Recover before the process exits, restarts, or closes the file descriptor.
+
+------------------------------------------------------------
+1. INSTALL REQUIRED TOOL
+------------------------------------------------------------
+
+Debian / Ubuntu / Mint:
+
+sudo apt update
+sudo apt install -y lsof
+
+RHEL / CentOS / Fedora / Rocky / AlmaLinux:
+
+sudo dnf install -y lsof
+
+------------------------------------------------------------
+2. FIND OPEN DELETED FILES
+------------------------------------------------------------
+
+Best command:
+
+sudo lsof +L1
+
+Alternative:
+
+sudo lsof | grep deleted
+
+Important columns:
+
+COMMAND   PID   USER   FD   TYPE   SIZE/OFF   NLINKS   NAME
+nginx    1423   www    4w   REG    204800     0        /var/log/nginx/access.log (deleted)
+
+Use:
+
+PID = process ID
+FD  = file descriptor number
+NLINKS = 0 means directory entry is gone
+(deleted) confirms file was unlinked
+
+------------------------------------------------------------
+3. MANUAL RECOVERY COMMAND
+------------------------------------------------------------
+
+Template:
+
+sudo cp /proc/<PID>/fd/<FD> <output_file>
+
+Example:
+
+sudo cp /proc/1423/fd/4 /tmp/access.log.recovered
+
+Verify:
+
+ls -lh /tmp/access.log.recovered
+file /tmp/access.log.recovered
+head /tmp/access.log.recovered
+
+------------------------------------------------------------
+4. QUICK RECOVERY FUNCTION
+------------------------------------------------------------
+
+Copy this into ~/.bashrc, ~/.zshrc, or a shared admin shell file.
+
+recover_deleted() {
+  local filename="$1"
+  local output="${2:-/tmp/recovered_file}"
+  local result
+
+  if [[ -z "$filename" ]]; then
+    echo "Usage: recover_deleted <filename-pattern> [output-file]"
+    return 2
+  fi
+
+  result=$(sudo lsof +L1 2>/dev/null | grep -- "$filename" | head -n 1)
+
+  if [[ -z "$result" ]]; then
+    echo "No open deleted file matched: $filename"
+    echo "The process may have closed the file already."
+    return 1
+  fi
+
+  local pid fd size name
+  pid=$(echo "$result" | awk '{print $2}')
+  fd=$(echo "$result" | awk '{print $4}' | tr -d 'rwu')
+  size=$(echo "$result" | awk '{print $7}')
+  name=$(echo "$result" | awk '{$1=$2=$3=$4=$5=$6=$7=$8=""; print $0}' | sed 's/^ *//')
+
+  echo "Found deleted open file:"
+  echo "  PID:  $pid"
+  echo "  FD:   $fd"
+  echo "  Size: $size"
+  echo "  Name: $name"
+  echo
+
+  if [[ ! -e "/proc/$pid/fd/$fd" ]]; then
+    echo "Descriptor no longer exists: /proc/$pid/fd/$fd"
+    echo "The process may have exited."
+    return 1
+  fi
+
+  sudo cp "/proc/$pid/fd/$fd" "$output"
+  local rc=$?
+
+  if [[ $rc -eq 0 ]]; then
+    echo "Recovered to: $output"
+    ls -lh "$output"
+  else
+    echo "Recovery failed."
+    return $rc
+  fi
+}
+
+Usage:
+
+recover_deleted access.log /tmp/access.log.recovered
+recover_deleted syslog /tmp/syslog.recovered
+
+------------------------------------------------------------
+5. LIST ALL RECOVERABLE DELETED FILES
+------------------------------------------------------------
+
+list_deleted_open_files() {
+  sudo lsof +L1 2>/dev/null | awk 'NR==1 || /deleted/'
+}
+
+Usage:
+
+list_deleted_open_files
+
+------------------------------------------------------------
+6. RECOVER BY PID AND FILE DESCRIPTOR
+------------------------------------------------------------
+
+Use this when you already know PID and FD.
+
+recover_deleted_fd() {
+  local pid="$1"
+  local fd="$2"
+  local output="$3"
+
+  if [[ -z "$pid" || -z "$fd" || -z "$output" ]]; then
+    echo "Usage: recover_deleted_fd <PID> <FD> <output-file>"
+    return 2
+  fi
+
+  fd=$(echo "$fd" | tr -d 'rwu')
+
+  if [[ ! -e "/proc/$pid/fd/$fd" ]]; then
+    echo "Descriptor not found: /proc/$pid/fd/$fd"
+    return 1
+  fi
+
+  sudo cp "/proc/$pid/fd/$fd" "$output" && echo "Recovered to: $output"
+}
+
+Usage:
+
+recover_deleted_fd 1423 4 /tmp/access.log.recovered
+recover_deleted_fd 1423 4w /tmp/access.log.recovered
+
+------------------------------------------------------------
+7. TEST LAB PROCEDURE
+------------------------------------------------------------
+
+Terminal 1:
+
+mkdir -p /tmp/recovery-test
+echo "line one" > /tmp/recovery-test/demo.log
+tail -f /tmp/recovery-test/demo.log
+
+Terminal 2:
+
+rm /tmp/recovery-test/demo.log
+sudo lsof +L1 | grep demo.log
+
+Find PID and FD, then recover:
+
+sudo cp /proc/<PID>/fd/<FD> /tmp/demo.log.recovered
+cat /tmp/demo.log.recovered
+
+Expected result:
+The recovered file contains the original content.
+
+------------------------------------------------------------
+8. CRITICAL WARNINGS
+------------------------------------------------------------
+
+- Run recovery before the process exits.
+- Use sudo or root.
+- The copied file is only a snapshot.
+- If the process keeps writing, those future writes do not update your recovered copy.
+- Restart or reload the service after restoring log files so it opens a real linked file again.
+- If the process has already closed the file, /proc recovery will not work.
+
+------------------------------------------------------------
+9. IF THE PROCESS ALREADY CLOSED THE FILE
+------------------------------------------------------------
+
+Possible tools:
+
+extundelete
+testdisk
+photorec
+ext3grep
+
+Safety rule:
+Do not run raw disk recovery tools on a mounted read-write filesystem.
+Unmount the filesystem first or boot from a live USB.
+
+------------------------------------------------------------
+10. PREVENTION
+------------------------------------------------------------
+
+Hard link protection for important logs:
+
+sudo ln /var/log/nginx/access.log /var/log/nginx/access.log.hardlink
+ls -li /var/log/nginx/access.log /var/log/nginx/access.log.hardlink
+
+Same inode number means both names point to the same file data.
+
+Limitations:
+Hard links only work within the same filesystem.
+

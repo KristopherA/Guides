@@ -1,0 +1,189 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 22 ANSIBLE
+AUTOMATION
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+Ansible provides repeatable, idempotent deployment and management of
+WireGuard servers and clients. This chapter demonstrates recommended
+inventory organization, role structure, templating, validation, and
+operational workflows.
+
+===============================================================================
+2. WHY ANSIBLE
+===============================================================================
+
+Benefits
+
+-   Agentless management
+-   Idempotent execution
+-   Version-controlled infrastructure
+-   Repeatable deployments
+-   Simplified rollback
+-   Easy integration with CI/CD
+
+===============================================================================
+3. RECOMMENDED DIRECTORY STRUCTURE
+===============================================================================
+
+wireguard/ ├── inventory/ │ ├── production │ └── lab ├── group_vars/ ├──
+host_vars/ ├── roles/ │ └── wireguard/ │ ├── tasks/ │ ├── handlers/ │
+├── templates/ │ ├── files/ │ └── defaults/ └── playbooks/
+
+===============================================================================
+4. INVENTORY EXAMPLE
+===============================================================================
+
+[wireguard_servers] vpn-hq vpn-dr
+
+[branches] branch-a branch-b
+
+[administrators] admin-laptop
+
+Separate production, lab, and disaster recovery inventories.
+
+===============================================================================
+5. ROLE DESIGN
+===============================================================================
+
+Typical tasks
+
+-   Install packages
+-   Enable IP forwarding
+-   Deploy keys
+-   Render wg0.conf
+-   Configure firewall
+-   Enable service
+-   Validate tunnel
+
+Keep each task focused and idempotent.
+
+===============================================================================
+6. CONFIGURATION TEMPLATES
+===============================================================================
+
+Store templates under:
+
+roles/wireguard/templates/
+
+Example
+
+wg0.conf.j2
+
+Replace variables with Jinja2:
+
+{{ vpn_address }} {{ listen_port }} {{ private_key }} {{ peer_public_key
+}}
+
+Never hard-code secrets in templates.
+
+===============================================================================
+7. SECRET MANAGEMENT
+===============================================================================
+
+Recommended options
+
+-   Ansible Vault
+-   External secret manager
+-   Encrypted CI/CD variables
+
+Never store:
+
+-   Private keys
+-   Passwords
+-   API tokens
+
+in plaintext repositories.
+
+===============================================================================
+8. HANDLERS
+===============================================================================
+
+Restart WireGuard only when configuration changes.
+
+Example handler
+
+-   Restart wg-quick@wg0
+
+This avoids unnecessary tunnel interruptions.
+
+===============================================================================
+9. VALIDATION PLAYBOOK
+===============================================================================
+
+Verify
+
+-   Package installed
+-   Service running
+-   Interface exists
+-   Routes present
+-   Firewall loaded
+-   Recent handshake
+
+Useful commands
+
+wg show systemctl status wg-quick@wg0 ip addr show wg0
+
+===============================================================================
+10. ROLLING DEPLOYMENTS
+===============================================================================
+
+Deploy to
+
+Lab ↓ Disaster Recovery ↓ Production
+
+Update gateways one at a time to reduce operational risk.
+
+===============================================================================
+11. GIT WORKFLOW
+===============================================================================
+
+Recommended process
+
+Feature Branch ↓ Code Review ↓ Merge ↓ Automated Deployment ↓ Validation
+
+Tag production releases for rollback purposes.
+
+===============================================================================
+12. TROUBLESHOOTING
+===============================================================================
+
+Configuration not updated
+
+Check
+
+-   Inventory
+-   Variables
+-   Template rendering
+-   Task conditions
+
+Tunnel restarted unexpectedly
+
+Review
+
+-   Handlers
+-   Changed tasks
+-   Configuration differences
+
+===============================================================================
+13. BEST PRACTICES
+===============================================================================
+
+-   Keep playbooks idempotent.
+-   Separate secrets from code.
+-   Test in a lab first.
+-   Use descriptive inventory names.
+-   Store all automation in version control.
+-   Validate every deployment automatically.
+-   Document all variables.
+
+===============================================================================
+14. AUTOMATION CHECKLIST
+===============================================================================
+
+[ ] Inventory maintained [ ] Templates reviewed [ ] Secrets encrypted [
+] Validation playbooks complete [ ] Rollback tested [ ] CI/CD documented
+[ ] Production deployment verified
+
+END OF CHAPTER 22

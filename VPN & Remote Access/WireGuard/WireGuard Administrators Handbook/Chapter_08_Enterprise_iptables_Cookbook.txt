@@ -1,0 +1,187 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 8 ENTERPRISE
+IPTABLES COOKBOOK
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter provides production-ready iptables patterns for protecting
+a WireGuard gateway and controlling access to segmented enterprise
+networks.
+
+===============================================================================
+2. BASE POLICY
+===============================================================================
+
+Flush existing rules
+
+iptables -F iptables -t nat -F
+
+Default policies
+
+iptables -P INPUT DROP iptables -P FORWARD DROP iptables -P OUTPUT
+ACCEPT
+
+Allow loopback
+
+iptables -A INPUT -i lo -j ACCEPT
+
+Allow established traffic
+
+iptables -A INPUT -m conntrack –ctstate ESTABLISHED,RELATED -j ACCEPT
+
+===============================================================================
+3. ALLOW WIREGUARD
+===============================================================================
+
+Allow UDP/51820
+
+iptables -A INPUT -p udp –dport 51820 -j ACCEPT
+
+Verify
+
+iptables -L INPUT -n -v
+
+===============================================================================
+4. FORWARD VPN TRAFFIC
+===============================================================================
+
+Allow VPN interface
+
+iptables -A FORWARD -i wg0 -j ACCEPT iptables -A FORWARD -o wg0 -j
+ACCEPT
+
+Enable forwarding
+
+sysctl -w net.ipv4.ip_forward=1
+
+===============================================================================
+5. NAT
+===============================================================================
+
+Internet access
+
+iptables -t nat -A POSTROUTING -s 10.100.0.0/24 -o eth0 -j MASQUERADE
+
+Use MASQUERADE for dynamic WAN addresses.
+
+===============================================================================
+6. PER-VLAN ACCESS
+===============================================================================
+
+Servers
+
+iptables -A FORWARD -i wg0 -d 10.60.10.0/24 -j ACCEPT
+
+Management
+
+iptables -A FORWARD -i wg0 -d 10.60.40.0/24 -j ACCEPT
+
+Storage
+
+iptables -A FORWARD -i wg0 -d 10.60.30.0/24 -j ACCEPT
+
+Default deny
+
+iptables -A FORWARD -i wg0 -j DROP
+
+===============================================================================
+7. PER-PORT ACCESS
+===============================================================================
+
+SSH
+
+iptables -A FORWARD -i wg0 -p tcp –dport 22 -j ACCEPT
+
+HTTPS
+
+iptables -A FORWARD -i wg0 -p tcp –dport 443 -j ACCEPT
+
+RDP
+
+iptables -A FORWARD -i wg0 -p tcp –dport 3389 -j ACCEPT
+
+DNS
+
+iptables -A FORWARD -i wg0 -p udp –dport 53 -j ACCEPT
+
+LDAP
+
+iptables -A FORWARD -i wg0 -p tcp –dport 389 -j ACCEPT
+
+LDAPS
+
+iptables -A FORWARD -i wg0 -p tcp –dport 636 -j ACCEPT
+
+===============================================================================
+8. SITE-TO-SITE
+===============================================================================
+
+Allow Office A to Office B
+
+iptables -A FORWARD -s 10.60.0.0/16 -d 10.20.0.0/16 -j ACCEPT
+
+Return traffic
+
+iptables -A FORWARD -s 10.20.0.0/16 -d 10.60.0.0/16 -j ACCEPT
+
+===============================================================================
+9. LOGGING
+===============================================================================
+
+Log dropped VPN packets
+
+iptables -A FORWARD -i wg0 -j LOG –log-prefix “WG DROP”
+
+View logs
+
+journalctl -f
+
+===============================================================================
+10. RATE LIMIT SSH
+===============================================================================
+
+iptables -A INPUT -p tcp –dport 22 -m conntrack –ctstate NEW -m limit
+–limit 5/minute -j ACCEPT
+
+===============================================================================
+11. SAVE RULES
+===============================================================================
+
+Debian/Ubuntu
+
+iptables-save > /etc/iptables/rules.v4
+
+Restore
+
+iptables-restore < /etc/iptables/rules.v4
+
+===============================================================================
+12. TROUBLESHOOTING
+===============================================================================
+
+Show counters
+
+iptables -L -n -v iptables -t nat -L -n -v
+
+Common issues
+
+-   Missing FORWARD rule
+-   Missing NAT
+-   Wrong interface
+-   Default DROP before ACCEPT
+-   IP forwarding disabled
+
+===============================================================================
+13. BEST PRACTICES
+===============================================================================
+
+-   Default deny.
+-   Permit only required VLANs.
+-   Permit only required ports.
+-   Log denied traffic.
+-   Keep rule order simple.
+-   Comment and document firewall changes.
+-   Review counters regularly.
+
+END OF CHAPTER 8

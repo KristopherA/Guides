@@ -1,0 +1,307 @@
+================================================================================
+  PATCH MANAGEMENT WORKFLOW
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+
+================================================================================
+SECTION 1: PATCH SCHEDULE
+================================================================================
+
+  PATCH CYCLE: Monthly (2nd Tuesday of each month — mirrors Microsoft Patch Tuesday)
+  EMERGENCY PATCHES: Within 24-48 hours for CVSS 9.0+ or actively exploited CVEs
+
+  ┌─────────────────────────────┬──────────────────────┬───────────────────┐
+  │ Environment                 │ Patch Window         │ Maintenance Day   │
+  ├─────────────────────────────┼──────────────────────┼───────────────────┤
+  │ Test / Dev servers          │ Any time             │ Week 1 (Wed)      │
+  │ Staging servers             │ Business hours       │ Week 2 (Wed)      │
+  │ Production (non-critical)   │ After hours 6pm-10pm │ Week 3 (Tue)      │
+  │ Production (critical)       │ Approved window only │ Week 3 (Sat 2am)  │
+  │ Domain Controllers          │ Approved window only │ Week 3 (Sat 4am)  │
+  │ macOS Workstations          │ User-deferred, 7 days│ Ongoing / MDM     │
+  └─────────────────────────────┴──────────────────────┴───────────────────┘
+
+  NOTIFICATION: Email patch window notice to affected teams 5 days in advance.
+  CHANGE TICKET: Open a change request ticket before patching production systems.
+
+
+================================================================================
+SECTION 2: PRE-PATCH CHECKLIST
+================================================================================
+
+Complete before every production patch window.
+
+  [ ] REVIEW what patches are available
+        sudo apt update && apt list --upgradable 2>/dev/null
+        # Review Ubuntu Security Notices: https://ubuntu.com/security/notices
+        # Review CVE severity for each update
+
+  [ ] VERIFY backups completed successfully (see Backup_DR_Runbook.txt)
+        find /backups -name "$(date +%Y-%m-%d)" -type d
+        grep "Completed" /var/log/backup-linux.log | tail -5
+
+  [ ] NOTE current state (save for rollback comparison)
+        # Package versions before patching:
+        dpkg -l | grep -E "^ii" > /tmp/packages-before-$(date +%Y%m%d).txt
+        # Running services:
+        systemctl list-units --state=running --type=service --no-legend > /tmp/services-before-$(date +%Y%m%d).txt
+        # Kernel version:
+        uname -r > /tmp/kernel-before-$(date +%Y%m%d).txt
+
+  [ ] TAKE LVM SNAPSHOT (if applicable — provides instant rollback)
+        sudo lvcreate -L10G -s -n pre-patch-$(date +%Y%m%d) /dev/ubuntu-vg/root-lv
+        sudo lvs   # confirm snapshot created
+
+  [ ] CHECK disk space (need headroom for package downloads and kernel installs)
+        df -h /   # root must have >2GB free
+        df -h /boot   # /boot must have >200MB free
+
+  [ ] NOTIFY affected teams (email or ticket update)
+
+  [ ] CONFIRM rollback plan is documented:
+        Rollback plan: _______________________________________________
+
+  [ ] CONFIRM out-of-band access (IPMI/iDRAC/console) works in case SSH fails
+        ping -c2 <IPMI_IP>
+
+
+================================================================================
+SECTION 3: PATCHING PROCEDURES
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 UBUNTU SERVER PATCHING
+--------------------------------------------------------------------------------
+
+STEP 1 — Connect and verify pre-patch state
+  ssh ubuntu@server.example.com
+  uptime && free -h && df -h /
+
+STEP 2 — Update package lists
+  sudo apt update
+
+STEP 3 — Review what will be upgraded (dry run)
+  apt-get upgrade --dry-run 2>/dev/null | grep "^Inst" | head -30
+
+STEP 4 — Apply security updates only (conservative option)
+  sudo apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+  # --force-confdef: keep existing config if there's a conflict
+  # --force-confold: keep old config files (review manually after)
+
+  # Alternative: full upgrade (includes kernel and dependency changes)
+  sudo apt full-upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+
+STEP 5 — Clean up old packages
+  sudo apt autoremove -y && sudo apt autoclean
+
+STEP 6 — Check if reboot is required
+  [ -f /var/run/reboot-required ] && cat /var/run/reboot-required.pkgs || echo "No reboot required"
+
+STEP 7 — Check for config file changes (review before accepting)
+  # Find modified config files that need manual attention:
+  sudo find /etc -name "*.dpkg-new" -o -name "*.dpkg-dist" 2>/dev/null
+  # Review and merge if necessary:
+  sudo diff /etc/nginx/nginx.conf /etc/nginx/nginx.conf.dpkg-new
+
+STEP 8 — Reboot if required (schedule during maintenance window)
+  sudo reboot   # or schedule: sudo shutdown -r 02:00
+
+STEP 9 — Post-reboot verification (see Section 4)
+
+--------------------------------------------------------------------------------
+3.2 DOMAIN CONTROLLER / WINDOWS SERVER PATCHING
+--------------------------------------------------------------------------------
+
+  IMPORTANT: Only patch one DC at a time. Verify replication after each.
+
+STEP 1 — Confirm AD replication is healthy BEFORE patching
+  repadmin /replsummary
+  # Proceed only if all replication is current
+
+STEP 2 — Transfer FSMO roles off the DC being patched (if it holds them)
+  # Check current FSMO holder:
+  netdom query fsmo
+  # Transfer PDC Emulator to another DC:
+  Move-ADDirectoryServerOperationMasterRole -Identity DC02 -OperationMasterRole PDCEmulator
+
+STEP 3 — Install Windows Updates
+  # GUI: Settings > Windows Update > Check for updates > Install all
+  # PowerShell (requires PSWindowsUpdate module):
+  Install-Module PSWindowsUpdate -Force
+  Get-WindowsUpdate -AcceptAll -Install -AutoReboot
+
+STEP 4 — Wait for reboot and verify AD services start
+  Get-Service adws,dns,kdc,netlogon | Select-Object Name,Status
+
+STEP 5 — Verify replication recovered
+  repadmin /replsummary
+  dcdiag /test:replications
+
+STEP 6 — Return FSMO roles if transferred
+  Move-ADDirectoryServerOperationMasterRole -Identity DC01 -OperationMasterRole PDCEmulator
+
+STEP 7 — Patch the next DC (only after Step 6 is confirmed)
+
+--------------------------------------------------------------------------------
+3.3 macOS WORKSTATION PATCHING
+--------------------------------------------------------------------------------
+
+OPTION A — MDM POLICY (preferred — automated, managed)
+  # In Jamf/Mosyle/Kandji:
+  # Deploy: Software Update policy → scope all managed Macs
+  # Set grace period: users can defer up to 7 days, then forced
+  # Configure to suppress reboot prompts during business hours
+
+OPTION B — Manual (for a small fleet or unmanaged Macs)
+  # Check available updates:
+  softwareupdate -l
+
+  # Install all (no reboot):
+  sudo softwareupdate -i -a
+
+  # Install and reboot if needed:
+  sudo softwareupdate -i -a -R
+
+  # Remote command via SSH for all Macs:
+  for mac in mac01 mac02 mac03; do
+    echo "=== $mac ===" && ssh admin@$mac.example.com "sudo softwareupdate -i -a > /tmp/swupdate.log 2>&1 && echo DONE || echo FAILED"
+  done
+
+VERIFY PATCH LEVEL ON A MAC
+  sw_vers -productVersion   # macOS version
+  # Check all Macs:
+  for mac in mac01 mac02 mac03; do
+    echo -n "$mac: " && ssh admin@$mac.example.com "sw_vers -productVersion"
+  done
+
+
+================================================================================
+SECTION 4: POST-PATCH VERIFICATION CHECKLIST
+================================================================================
+
+Complete immediately after patching and again 1 hour later.
+
+  [ ] Server came back online
+        ping -c4 server.example.com
+
+  [ ] SSH accessible
+        ssh ubuntu@server.example.com "uptime"
+
+  [ ] No failed services
+        systemctl --failed
+
+  [ ] All expected services running
+        systemctl status nginx   # adjust for your services
+        systemctl status postgresql
+        systemctl status fail2ban
+        systemctl status sssd
+
+  [ ] Application endpoint responds correctly
+        curl -Is https://app.example.com | head -3   # expect HTTP 200/301/302
+        # Or for internal services: nc -zv server.example.com 5432
+
+  [ ] No new errors in logs since patch
+        sudo journalctl -p err -b --since "1 hour ago" --no-pager
+
+  [ ] Kernel version updated (if kernel patch was applied)
+        uname -r
+        cat /tmp/kernel-before-$(date +%Y%m%d).txt   # compare
+
+  [ ] Disk usage within normal range (kernel packages can fill /boot)
+        df -h / /boot
+
+  [ ] LVM snapshot removed (after confirming stability — wait 24 hours)
+        sudo lvremove -f /dev/ubuntu-vg/pre-patch-$(date +%Y%m%d)
+
+  [ ] Change ticket updated with result
+
+  [ ] Any config file diffs (.dpkg-new files) reviewed and actioned
+
+
+================================================================================
+SECTION 5: ROLLBACK PROCEDURES
+================================================================================
+
+--------------------------------------------------------------------------------
+5.1 ROLLBACK VIA LVM SNAPSHOT (fastest — if snapshot was taken)
+--------------------------------------------------------------------------------
+
+  # If server is misbehaving within 24 hours of patching and snapshot exists:
+  sudo systemctl stop nginx   # stop all services first
+  sudo umount /   # may need to work from recovery environment
+
+  # Merge snapshot back to original LV (reverting all changes):
+  sudo lvconvert --merge /dev/ubuntu-vg/pre-patch-$(date +%Y%m%d)
+  # Reboot to complete merge:
+  sudo reboot
+
+  # Verify after reboot:
+  uname -r   # should match pre-patch kernel
+  dpkg -l | grep -c "^ii"   # compare to pre-patch count
+
+--------------------------------------------------------------------------------
+5.2 ROLLBACK SPECIFIC PACKAGE
+--------------------------------------------------------------------------------
+
+  # List available versions of a package:
+  apt-cache showpkg nginx | grep "Versions:"
+  # Install specific version:
+  sudo apt install nginx=1.24.0-1ubuntu1 --allow-downgrades
+
+  # Or reinstall the previous cached version:
+  sudo apt install --reinstall nginx
+
+  # Hold the package at current version to prevent re-upgrade:
+  sudo apt-mark hold nginx
+  # To unhold later:
+  sudo apt-mark unhold nginx
+
+--------------------------------------------------------------------------------
+5.3 ROLLBACK KERNEL
+--------------------------------------------------------------------------------
+
+  # Boot into previous kernel: GRUB → Advanced → select previous kernel
+  # To set previous kernel as default:
+  sudo sed -i 's/GRUB_DEFAULT=0/GRUB_DEFAULT="Advanced options for Ubuntu>Ubuntu, with Linux 6.x.x-OLD"/' /etc/default/grub
+  sudo update-grub
+
+  # Remove problematic new kernel:
+  sudo apt purge linux-image-6.x.x-xx-generic
+  sudo update-grub
+
+
+================================================================================
+SECTION 6: EMERGENCY PATCH PROCEDURE (CRITICAL CVE)
+================================================================================
+
+For CVSS 9.0+ vulnerabilities or actively exploited vulnerabilities.
+Target: patch within 24 hours of public disclosure.
+
+  [ ] Assess: Is our version affected?
+        apt-cache policy <package>   # check installed version vs fixed version
+        # Check Ubuntu CVE tracker: https://ubuntu.com/security/cves
+
+  [ ] Check if a patch is available:
+        sudo apt update && apt list --upgradable 2>/dev/null | grep <package>
+
+  [ ] If patch available — skip test/staging and patch production directly
+        sudo apt update && sudo apt install -y <package>
+
+  [ ] If no patch yet — implement mitigation:
+        # Example for SSH vulnerability: restrict to known IPs:
+        sudo ufw delete allow 22/tcp
+        sudo ufw allow from 10.0.0.0/8 to any port 22
+        # Disable affected feature in config (CVE-specific)
+
+  [ ] Document the emergency patch in the change log
+
+  [ ] Notify management and affected stakeholders
+
+  Patch applied:   Date: _________  Admin: _________  CVE: _________
+
+================================================================================
+END OF DOCUMENT
+================================================================================

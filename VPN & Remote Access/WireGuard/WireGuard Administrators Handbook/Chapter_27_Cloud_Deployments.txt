@@ -1,0 +1,188 @@
+WIREGUARD ENTERPRISE ADMINISTRATOR’S HANDBOOK CHAPTER 27 CLOUD
+DEPLOYMENTS
+
+=============================================================================== 1.
+OBJECTIVE
+===============================================================================
+
+This chapter covers deploying WireGuard in public cloud environments,
+connecting cloud resources to on-premises infrastructure, and building
+highly available hybrid enterprise networks.
+
+===============================================================================
+2. COMMON USE CASES
+===============================================================================
+
+-   Secure administrator access to cloud workloads
+-   Site-to-site VPN between cloud and on-premises
+-   Multi-cloud connectivity
+-   Disaster recovery connectivity
+-   Secure access to Kubernetes clusters
+-   Secure access to cloud management networks
+
+===============================================================================
+3. REFERENCE ARCHITECTURE
+===============================================================================
+
+                    Internet
+                        |
+                 +---------------+
+                 | WireGuard VPN |
+                 +---------------+
+                    /         \
+                   /           \
+           On-Premises      Cloud VPC/VNet
+                |                |
+         Management LAN      Private Subnets
+
+Keep VPN gateways in dedicated management subnets whenever possible.
+
+===============================================================================
+4. CLOUD PROVIDER CONSIDERATIONS
+===============================================================================
+
+AWS - Security Groups - Route Tables - Elastic IPs
+
+Microsoft Azure - Network Security Groups (NSGs) - User Defined Routes
+(UDRs) - Availability Zones
+
+Google Cloud Platform - VPC Firewall Rules - Cloud Router - Multiple
+VPCs
+
+Oracle Cloud Infrastructure - Security Lists - Network Security Groups -
+Dynamic Routing Gateway (DRG)
+
+DigitalOcean - Cloud Firewalls - VPC Networking
+
+===============================================================================
+5. ROUTING
+===============================================================================
+
+Advertise only required prefixes.
+
+Example
+
+On-premises
+
+10.60.0.0/16
+
+Cloud
+
+10.50.0.0/16
+
+Verify
+
+ip route ip route get 10.50.1.20
+
+Cloud routing tables must also contain return routes to the on-premises
+network.
+
+===============================================================================
+6. FIREWALLS
+===============================================================================
+
+Allow
+
+UDP/51820
+
+Permit only required administrative ports over the VPN.
+
+Examples
+
+22 SSH 3389 RDP 443 HTTPS 6443 Kubernetes API 8006 Proxmox VE
+
+Avoid exposing these services directly to the Internet.
+
+===============================================================================
+7. HIGH AVAILABILITY
+===============================================================================
+
+Recommendations
+
+-   Multiple Availability Zones
+-   Multiple VPN gateways
+-   Dynamic DNS
+-   Health monitoring
+-   Automated failover
+
+Use cloud load balancing only where compatible with UDP-based WireGuard
+traffic.
+
+===============================================================================
+8. DNS
+===============================================================================
+
+Use private DNS for internal services.
+
+Examples
+
+server01.internal.example k8s-api.internal.example
+
+Validate
+
+dig nslookup host
+
+Split DNS is recommended for hybrid environments.
+
+===============================================================================
+9. MONITORING
+===============================================================================
+
+Monitor
+
+wg show journalctl -u wg-quick@wg0 ip route
+
+Cloud-native monitoring
+
+AWS CloudWatch Azure Monitor Google Cloud Monitoring OCI Monitoring
+
+Alert on
+
+-   Tunnel down
+-   Stale handshakes
+-   High packet loss
+-   CPU utilization
+-   Route failures
+
+===============================================================================
+10. TROUBLESHOOTING
+===============================================================================
+
+Tunnel established but cloud resources unreachable
+
+Check
+
+-   Cloud route table
+-   Security Group / NSG
+-   AllowedIPs
+-   IP forwarding
+-   Firewall rules
+
+No handshake
+
+-   Public IP
+-   DNS
+-   UDP/51820
+-   Security policy
+
+===============================================================================
+11. BEST PRACTICES
+===============================================================================
+
+-   Use infrastructure as code.
+-   Keep management isolated.
+-   Use least-privilege firewall rules.
+-   Monitor tunnel health continuously.
+-   Test disaster recovery regularly.
+-   Protect private keys using cloud secret managers.
+-   Document all cloud routes.
+
+===============================================================================
+12. DEPLOYMENT CHECKLIST
+===============================================================================
+
+[ ] VPN gateway deployed [ ] Cloud routing verified [ ] Security
+Groups/NSGs configured [ ] DNS validated [ ] Monitoring enabled [ ]
+Failover tested [ ] Backups completed [ ] Documentation updated
+
+END OF CHAPTER 27

@@ -1,0 +1,399 @@
+================================================================================
+  ONBOARDING & OFFBOARDING CHECKLISTS
+  Infrastructure: Active Directory | Ubuntu 24.04 LTS | macOS Workstations
+================================================================================
+
+Last Updated: 2026-06-29
+Maintainer: it@example.com
+
+USAGE: Work through each section top to bottom. Check off each item.
+       Record completion date and your initials next to each step.
+       File the completed checklist in the IT ticketing system.
+
+================================================================================
+PART 1: NEW EMPLOYEE ONBOARDING
+================================================================================
+
+Trigger: Approved IT request received from HR/Manager
+Required info from request:
+  - Full legal name
+  - Preferred username format (e.g., first initial + surname)
+  - Department and Manager name
+  - Start date
+  - Role/Job title
+  - Required software/systems access
+  - macOS workstation needed? (yes/no)
+  - Remote/on-site/hybrid
+
+--------------------------------------------------------------------------------
+STEP 1 — ACTIVE DIRECTORY ACCOUNT CREATION
+--------------------------------------------------------------------------------
+
+  [ ] Choose username (check for conflicts first)
+        Get-ADUser -Identity <proposed_username> 2>&1
+
+  [ ] Create the AD user account
+        New-ADUser `
+          -GivenName "<FirstName>" `
+          -Surname "<LastName>" `
+          -Name "<FirstName> <LastName>" `
+          -DisplayName "<FirstName> <LastName>" `
+          -SamAccountName <username> `
+          -UserPrincipalName <username>@example.com `
+          -EmailAddress <username>@example.com `
+          -Department "<Department>" `
+          -Title "<Job Title>" `
+          -Manager (Get-ADUser -Identity <manager_username>) `
+          -Path "OU=<Department>,OU=Staff,DC=example,DC=com" `
+          -AccountPassword (Read-Host -AsSecureString "Set password") `
+          -ChangePasswordAtLogon $true `
+          -Enabled $true
+
+  [ ] Verify account was created
+        Get-ADUser -Identity <username> -Properties * | Select-Object Name,Enabled,DistinguishedName
+
+  [ ] Add to standard groups (all staff)
+        Add-ADGroupMember -Identity "All-Staff" -Members <username>
+        Add-ADGroupMember -Identity "VPN-Users" -Members <username>
+        Add-ADGroupMember -Identity "WiFi-Corp" -Members <username>
+
+  [ ] Add to department-specific groups
+        Add-ADGroupMember -Identity "<Department>-Users" -Members <username>
+        # Add any additional role-specific groups per the request
+
+  [ ] Verify group memberships
+        Get-ADPrincipalGroupMembership <username> | Select-Object Name | Sort-Object Name
+
+  [ ] Set account to expire if fixed-term employee
+        Set-ADAccountExpiration -Identity <username> -DateTime "<YYYY-MM-DD>"
+
+  [ ] Record in asset/user log:   Date: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 2 — EMAIL AND CALENDAR
+--------------------------------------------------------------------------------
+
+  [ ] Verify Exchange/M365 mailbox was auto-provisioned (allow up to 30 min)
+        Get-Mailbox -Identity <username> | Select-Object PrimarySmtpAddress,MailboxTypeDetail
+
+  [ ] Configure display name and room/distribution lists if needed
+        Set-Mailbox -Identity <username> -DisplayName "<FirstName> <LastName>"
+
+  [ ] Add to relevant distribution groups
+        Add-DistributionGroupMember -Identity "<Department>-DL" -Member <username>
+
+  [ ] Set Out of Office / auto-reply if needed for start-date delay
+
+  [ ] Share relevant team calendars with new user
+
+  [ ] Record in asset/user log:   Date: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 3 — macOS WORKSTATION PROVISIONING
+--------------------------------------------------------------------------------
+
+  [ ] Assign a workstation from inventory (record asset tag and serial number)
+        Asset tag: _____________  Serial: _____________  Hostname: _____________
+
+  [ ] Wipe and re-image workstation (if reused)
+        # Boot to macOS Recovery: hold Cmd+R at startup
+        # Erase disk with Disk Utility, then reinstall macOS
+
+  [ ] Set hostname
+        sudo scutil --set ComputerName "WS-<lastname>"
+        sudo scutil --set HostName "ws-<lastname>.example.com"
+        sudo scutil --set LocalHostName "ws-<lastname>"
+
+  [ ] Enroll in MDM (if using Jamf/Mosyle/Kandji)
+        # Open MDM enrollment URL or use DEP auto-enrollment
+        # Verify enrollment:
+        sudo profiles list -all | grep -i "MDM\|management"
+
+  [ ] Bind to Active Directory
+        sudo dsconfigad -add example.com -username administrator \
+          -password "<password>" -computer WS-<lastname> \
+          -ou "OU=Macs,DC=example,DC=com"
+        # Verify:
+        dsconfigad -show
+
+  [ ] Add domain user as a local admin (if required by role)
+        sudo dseditgroup -o edit -a <username>@example.com -t user admin
+
+  [ ] Enable FileVault (ensure recovery key is escrowed to MDM or saved securely)
+        sudo fdesetup enable
+        # Save recovery key to: _____________
+
+  [ ] Install required software (via MDM policy or manually):
+        [ ] Office 365 / Microsoft 365
+        [ ] Web browser (Chrome/Firefox)
+        [ ] VPN client
+        [ ] Antivirus/EDR agent
+        [ ] Other: _____________________
+
+  [ ] Run all software updates
+        sudo softwareupdate -i -a
+
+  [ ] Verify firewall is enabled
+        /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+
+  [ ] Tag asset in inventory with user assignment
+
+  [ ] Record in asset/user log:   Date: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 4 — LINUX SERVER ACCESS (if required by role)
+--------------------------------------------------------------------------------
+
+  [ ] Confirm which servers the user needs access to
+
+  [ ] Add user to AD group that grants SSH/realm access
+        Add-ADGroupMember -Identity "Linux-<servername>-Access" -Members <username>
+
+  [ ] If using per-server authorized_keys (not SSSD):
+        # On each server:
+        sudo -u <username>@example.com mkdir -p /home/<username>@example.com/.ssh
+        # User provides their public key, then:
+        sudo tee /home/<username>@example.com/.ssh/authorized_keys <<< "<pubkey>"
+        sudo chown -R <username>@example.com: /home/<username>@example.com/.ssh
+        sudo chmod 700 /home/<username>@example.com/.ssh
+        sudo chmod 600 /home/<username>@example.com/.ssh/authorized_keys
+
+  [ ] Verify access (test SSH with user's credentials)
+        ssh <username>@example.com@server.example.com "whoami"
+
+  [ ] Grant sudo if required (create /etc/sudoers.d/ file on relevant servers)
+
+  [ ] Record in asset/user log:   Date: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 5 — ADDITIONAL SYSTEMS ACCESS
+--------------------------------------------------------------------------------
+
+  [ ] VPN: account created / access verified
+  [ ] Wi-Fi certificate pushed via MDM
+  [ ] Shared drive/NFS access granted
+  [ ] Remote desktop access configured (if needed)
+  [ ] Any third-party SaaS accounts created:
+        [ ] ________________________
+        [ ] ________________________
+        [ ] ________________________
+
+  [ ] Record in asset/user log:   Date: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 6 — HANDOFF AND VERIFICATION
+--------------------------------------------------------------------------------
+
+  [ ] Email credentials securely to employee (use temp password + force change)
+  [ ] Provide employee with IT contact info and support portal URL
+  [ ] Confirm employee can log in to workstation with AD credentials
+  [ ] Confirm employee can access email
+  [ ] Confirm VPN connects successfully
+  [ ] Confirm employee can log in to all required systems
+  [ ] Send welcome email from IT with quick-start guide
+  [ ] Close IT ticket and record completion
+
+  Completed by: _____________________  Date: _____________________
+
+
+================================================================================
+PART 2: EMPLOYEE OFFBOARDING
+================================================================================
+
+Trigger: HR/Manager submits termination notice to IT
+CRITICAL: Do not begin until official notification received in writing.
+Target: Complete Steps 1-3 within 1 hour of termination effective time.
+
+Required info:
+  - Full name and username
+  - Last working day/time
+  - Data retention requirements (email, files)
+  - Who to transfer files/email to
+  - Return of equipment expected? (yes/no)
+  - Reason (voluntary/involuntary — affects urgency)
+
+--------------------------------------------------------------------------------
+STEP 1 — IMMEDIATE ACCESS REVOCATION (do first, within 1 hour)
+--------------------------------------------------------------------------------
+
+  [ ] Disable AD account (do NOT delete — keeps audit trail)
+        Disable-ADAccount -Identity <username>
+        # Verify:
+        Get-ADUser -Identity <username> | Select-Object Enabled
+
+  [ ] Reset AD password (prevents any cached credential use)
+        Set-ADAccountPassword -Identity <username> -Reset -NewPassword (New-Guid | ConvertTo-SecureString -AsPlainText -Force)
+
+  [ ] Move account to Disabled OU
+        Move-ADObject -Identity (Get-ADUser <username>).DistinguishedName `
+          -TargetPath "OU=Disabled,DC=example,DC=com"
+
+  [ ] Remove from all security groups (leave distribution groups temporarily for mail flow)
+        Get-ADPrincipalGroupMembership <username> |
+          Where-Object {$_.GroupCategory -eq "Security"} |
+          ForEach-Object { Remove-ADGroupMember -Identity $_ -Members <username> -Confirm:$false }
+
+  [ ] Revoke active Kerberos/SSSD sessions on Linux servers
+        for server in web01 app01 db01; do
+          ssh ubuntu@$server "sudo sss_cache -u <username>@example.com; sudo pkill -u <username>@example.com" 2>/dev/null
+        done
+
+  [ ] Revoke VPN access
+        # Disable in VPN management console or remove from VPN AD group
+        Remove-ADGroupMember -Identity "VPN-Users" -Members <username> -Confirm:$false
+
+  [ ] Revoke Wi-Fi certificate (via MDM)
+        # Push certificate revocation profile via MDM
+
+  [ ] Record in audit log:   Time: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 2 — DATA PRESERVATION
+--------------------------------------------------------------------------------
+
+  [ ] Archive home directory on Linux servers (before removal)
+        for server in web01 app01; do
+          ssh ubuntu@$server "sudo tar -czf /backups/offboarding/<username>-$(date +%Y%m%d).tar.gz /home/<username>@example.com/ 2>/dev/null"
+        done
+
+  [ ] Archive macOS home folder (if workstation not immediately wiped)
+        ssh admin@ws-<lastname>.example.com \
+          "sudo tar -czf /tmp/<username>-archive.tar.gz /Users/<username>/ 2>/dev/null && \
+           scp /tmp/<username>-archive.tar.gz admin@fileserver:/archives/offboarding/"
+
+  [ ] Email mailbox: configure auto-reply or forward per manager's instruction
+        Set-MailboxAutoReplyConfiguration -Identity <username> \
+          -AutoReplyState Enabled \
+          -InternalMessage "This person has left the organization. Please contact <manager>." \
+          -ExternalMessage "This person has left the organization. Please contact info@example.com."
+
+  [ ] Grant manager access to mailbox for defined retention period (e.g., 90 days)
+        Add-MailboxPermission -Identity <username> -User <manager_username> -AccessRights FullAccess -InheritanceType All
+
+  [ ] Export mailbox to PST if required for legal hold
+        New-MailboxExportRequest -Mailbox <username> -FilePath "\\fileserver\archives\<username>.pst"
+
+  [ ] Check for shared resources owned by this account:
+        [ ] Shared mailboxes they were the only owner of
+        [ ] Distribution groups they owned
+        [ ] Service accounts they managed
+        [ ] Scheduled tasks running as their credentials
+        [ ] Shared drives they were the sole owner of
+
+  [ ] Record in audit log:   Date: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 3 — EQUIPMENT RECOVERY
+--------------------------------------------------------------------------------
+
+  [ ] Retrieve and document returned equipment:
+        Item                    Asset Tag       Serial          Condition
+        macOS Workstation:      __________      ____________    ___________
+        Monitor(s):             __________      ____________    ___________
+        Keyboard/Mouse:         __________      ____________    ___________
+        Laptop bag/accessories: __________      n/a             ___________
+        Mobile device:          __________      ____________    ___________
+        Security/access badge:  n/a             n/a             ___________
+        Other: _______________: __________      ____________    ___________
+
+  [ ] Unenroll from MDM before wiping
+        sudo profiles remove -type enrollment -forced
+
+  [ ] Wipe macOS workstation
+        # Boot to Recovery (Cmd+R) → Erase Mac → Reinstall macOS
+        # Or via MDM: send remote wipe command
+
+  [ ] Remove computer account from Active Directory (after wipe confirmed)
+        Remove-ADComputer -Identity WS-<lastname> -Confirm:$false
+
+  [ ] Remove from asset inventory (update status to "available" or "retired")
+
+  [ ] Record in asset log:   Date: _________  Admin: _________
+
+--------------------------------------------------------------------------------
+STEP 4 — DEFERRED CLEANUP (30–90 DAYS AFTER DEPARTURE)
+--------------------------------------------------------------------------------
+
+  [ ] Confirm no business-critical data is still needed (check with manager)
+
+  [ ] Delete Linux home directories after data has been transferred
+        ssh ubuntu@server "sudo rm -rf /home/<username>@example.com/"
+
+  [ ] Remove from distribution groups and shared mailbox access
+        Get-DistributionGroup -Filter * | ForEach-Object {
+          Remove-DistributionGroupMember -Identity $_ -Member <username> -ErrorAction SilentlyContinue -Confirm:$false
+        }
+
+  [ ] Remove mailbox delegation granted to manager
+        Remove-MailboxPermission -Identity <username> -User <manager_username> -AccessRights FullAccess -Confirm:$false
+
+  [ ] Convert mailbox to shared mailbox (cheaper licensing) or delete
+        Set-Mailbox -Identity <username> -Type Shared
+        # or:
+        Remove-Mailbox -Identity <username> -Confirm:$false
+
+  [ ] Delete AD account after retention period (check policy — typically 90 days)
+        Remove-ADUser -Identity <username> -Confirm:$false
+
+  [ ] Audit any remaining references:
+        # Scheduled tasks running as the user
+        schtasks /query /fo LIST 2>/dev/null | grep -A5 "<username>"
+        # Cron jobs on Linux servers
+        for server in web01 app01; do ssh ubuntu@$server "sudo crontab -l -u <username>@example.com 2>/dev/null"; done
+        # File/share ownership
+        # Service account references in configs
+
+  [ ] Close all related IT tickets
+
+  Completed by: _____________________  Date: _____________________
+
+--------------------------------------------------------------------------------
+OFFBOARDING AUDIT TRAIL
+--------------------------------------------------------------------------------
+
+  Employee Name:            _______________________________
+  Username (SAMAccount):    _______________________________
+  Last Working Day:         _______________________________
+  Termination Type:         [ ] Voluntary  [ ] Involuntary  [ ] Contract End
+  AD account disabled:      Date: _________  Admin: _________
+  Equipment returned:       Date: _________  Admin: _________
+  Data archived:            Date: _________  Admin: _________
+  Deferred cleanup done:    Date: _________  Admin: _________
+  Final sign-off:           Date: _________  Admin: _________
+
+
+================================================================================
+PART 3: ROLE CHANGE / INTERNAL TRANSFER
+================================================================================
+
+Trigger: HR/Manager submits internal transfer request
+
+  [ ] Update AD attributes
+        Set-ADUser -Identity <username> -Department "<NewDept>" -Title "<NewTitle>" `
+          -Manager (Get-ADUser -Identity <new_manager>)
+
+  [ ] Move account to new OU
+        Move-ADObject -Identity (Get-ADUser <username>).DistinguishedName `
+          -TargetPath "OU=<NewDept>,OU=Staff,DC=example,DC=com"
+
+  [ ] Add to new department/role groups
+        Add-ADGroupMember -Identity "<NewDept>-Users" -Members <username>
+
+  [ ] Remove from old department/role groups (after verifying new access works)
+        Remove-ADGroupMember -Identity "<OldDept>-Users" -Members <username> -Confirm:$false
+
+  [ ] Update email distribution lists (add new dept DL, remove old)
+
+  [ ] Review and update Linux server access groups
+
+  [ ] Update macOS workstation assignment in inventory if relocated
+
+  [ ] Verify new manager can access shared resources
+
+  [ ] Update asset inventory record
+
+  Completed by: _____________________  Date: _____________________
+
+================================================================================
+END OF DOCUMENT
+================================================================================

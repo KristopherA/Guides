@@ -1,0 +1,170 @@
+Malware Hunting Lab Architecture Diagram
+========================================
+
+Goal
+----
+Create a controlled architecture for malware hunting using containers, remote
+access, staged sample handling, and detection-output generation.
+
+Plain-text architecture
+-----------------------
+
+                         Analyst Browser
+                              |
+                              v
+              +--------------------------------+
+              | Browser Access Gateway         |
+              | RDP/SSH over web socket        |
+              | Example: Guacamole-style access|
+              +--------------------------------+
+                              |
+                              v
+        +------------------------------------------------+
+        | Remote Cyber Range / Cloud Lab                 |
+        | Examples: Kleared4, SecureRange, private cloud |
+        +------------------------------------------------+
+              |                 |                 |
+              v                 v                 v
++-------------------+   +----------------+   +-------------------+
+| Sample Intake     |   | Static Analysis|   | Reporting / Rules |
+| No execution      |   | No detonation  |   | Clean zone        |
++-------------------+   +----------------+   +-------------------+
+              |                 |                 ^
+              v                 v                 |
++----------------------------------------------------------+
+| Sample Store                                              |
+| Path by SHA256                                            |
+| Metadata JSON                                             |
+| Original + unpacked payloads                              |
++----------------------------------------------------------+
+              |
+              v
++----------------------------------------------------------+
+| Detonation Network                                        |
+| Isolated segment                                          |
+| No uncontrolled outbound internet                         |
+| Optional fake DNS / INetSim / proxy / sinkhole            |
++----------------------------------------------------------+
+              |
+              v
++----------------------------------------------------------+
+| Malware Execution Container / Disposable VM               |
+| Non-root user                                             |
+| Read-only tooling where possible                          |
+| One sample per job                                        |
++----------------------------------------------------------+
+              |
+              v
++----------------------------------------------------------+
+| Sensors                                                   |
+| packet capture                                            |
+| DNS logs                                                  |
+| process monitoring                                        |
+| file-system monitoring                                    |
+| syscall tracing                                           |
++----------------------------------------------------------+
+              |
+              v
++----------------------------------------------------------+
+| Artifact Export                                           |
+| PCAP                                                      |
+| dropped files                                             |
+| process tree                                              |
+| strings                                                   |
+| logs                                                      |
+| screenshots                                               |
+| generated detections                                      |
++----------------------------------------------------------+
+
+Recommended zones
+-----------------
+
+1. Analyst Zone
+   - Browser only.
+   - No sample execution.
+   - Accesses lab through gateway.
+
+2. Intake Zone
+   - Pulls samples from MalwareBazaar or other approved feeds.
+   - Stores samples safely.
+   - Calculates hashes.
+   - No execution permitted.
+
+3. Static Analysis Zone
+   - Strings, file type detection, hash enrichment, metadata extraction.
+   - No detonation.
+
+4. Detonation Zone
+   - Disposable containers or VMs.
+   - No root execution.
+   - Egress controlled.
+   - Heavy monitoring.
+
+5. Services Zone
+   - Fake DNS.
+   - Fake HTTP services.
+   - Packet capture.
+   - Optional controlled proxy.
+
+6. Detection Engineering Zone
+   - yarGen.
+   - YARA validation.
+   - IOC normalization.
+   - Sigma/SIEM rule drafting.
+
+7. Reporting Zone
+   - Clean final outputs.
+   - Markdown/text reports.
+   - Rule repository.
+
+Trust boundaries
+----------------
+
+Boundary 1: Internet -> Intake
+  Only approved pull scripts and APIs should be allowed.
+
+Boundary 2: Intake -> Detonation
+  Samples move one way into execution jobs.
+
+Boundary 3: Detonation -> Reporting
+  Only artifacts and logs are exported.
+
+Boundary 4: Lab -> Analyst workstation
+  No raw malware should be copied back to a personal workstation unless there is
+  a strict business need and approved handling process.
+
+Container safety baseline
+-------------------------
+
+Use these defaults unless there is a deliberate reason not to:
+
+- run as non-root user
+- disable privileged mode
+- drop Linux capabilities
+- use read-only root filesystem where possible
+- no host Docker socket mount
+- no host filesystem mounts except dedicated sample/artifact directories
+- no shared credentials inside containers
+- one sample per disposable execution environment
+- explicit resource limits
+- explicit network segmentation
+
+Example data flow
+-----------------
+
+1. Analyst starts job.
+2. Intake downloads sample.
+3. Intake calculates SHA256.
+4. Sample is stored under sample_store/SHA256/.
+5. Static analysis extracts metadata.
+6. Optional ANY.RUN or UnpacMe analysis is attached to job record.
+7. Detonation container starts.
+8. Sensors start.
+9. Sample executes.
+10. Sensors stop.
+11. Artifacts export.
+12. Container is destroyed.
+13. yarGen creates candidate YARA.
+14. Analyst validates detections.
+15. Final report is written.
+

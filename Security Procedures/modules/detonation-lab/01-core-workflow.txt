@@ -1,0 +1,198 @@
+Malware Hunting with Containers - Core Workflow
+===============================================
+
+Purpose
+-------
+Build a repeatable, safer workflow for collecting malware samples, staging them,
+triaging behavior, unpacking payloads, analyzing artifacts in containers, and
+turning findings into detection content.
+
+Primary resources from the notes
+--------------------------------
+
+- Kleared4 Cyber Range:
+  https://compsecdirect.com/kleared4-cyber-range/
+
+- CompSecDirect YouTube:
+  https://www.youtube.com/@compsecdirect
+
+- MalwareBazaar:
+  https://bazaar.abuse.ch/
+
+- UCTAMAS malware acquisition script:
+  https://github.com/compsecdirect/uctamas
+
+- ANY.RUN:
+  https://app.any.run/
+
+- SecureRange:
+  https://one.securerange.com/
+
+- UnpacMe:
+  https://www.unpac.me
+
+- yarGen:
+  https://github.com/Neo23x0/yarGen
+
+Core principle
+--------------
+The goal is not simply to run malware. The goal is to build a controlled pipeline:
+
+  Acquire sample -> Stage safely -> Triage -> Unpack -> Analyze -> Extract IOCs
+  -> Generate detections -> Validate -> Report -> Destroy/snapshot-reset lab
+
+High-level workflow
+-------------------
+
+PHASE 1 - Prepare safe infrastructure
+
+1. Use a remote cyber range or cloud-hosted lab when possible.
+2. Avoid detonating malware from your home network.
+3. Use isolated networks for malware execution.
+4. Use browser-based access such as Apache Guacamole-style RDP/SSH gateways.
+5. Separate systems by function:
+   - sample intake
+   - sample storage
+   - detonation
+   - packet capture
+   - static analysis
+   - rule generation
+   - reporting
+6. Ensure containers do not run as root.
+7. Snapshot or rebuild the environment before and after analysis.
+
+PHASE 2 - Acquire malware samples
+
+1. Use MalwareBazaar as a sample source.
+2. Use API-based pulls or a script such as UCTAMAS for repeatable acquisition.
+3. Store samples in a staging directory.
+4. Do not execute samples during acquisition.
+5. Record metadata:
+   - SHA256
+   - source URL
+   - acquisition date/time
+   - tags/family if known
+   - original filename
+   - analyst name or job ID
+
+PHASE 3 - Initial triage
+
+1. Submit a sample to an interactive sandbox such as ANY.RUN when appropriate.
+2. Review initial behavior:
+   - process tree
+   - network connections
+   - dropped files
+   - persistence attempts
+   - suspicious command execution
+   - DNS queries
+   - registry or system modification indicators
+3. Extract early IOCs:
+   - hashes
+   - domains
+   - IP addresses
+   - URLs
+   - mutexes
+   - filenames
+   - registry paths
+   - command lines
+
+PHASE 4 - Unpack malware when needed
+
+1. Use UnpacMe or equivalent tooling to identify or unpack protected binaries.
+2. Save both packed and unpacked hashes.
+3. Track parent/child relationship:
+   - original sample hash
+   - unpacked payload hash
+   - unpacking timestamp
+4. Use unpacked payloads for deeper static analysis and YARA development.
+
+PHASE 5 - Containerized analysis
+
+1. Move the sample into an isolated analysis container or disposable VM.
+2. Confirm the runtime user is not root.
+3. Start monitoring before execution:
+   - process monitor
+   - file-system watcher
+   - network capture
+   - DNS logger
+   - syscall tracer where useful
+4. Execute the sample only in the correct detonation environment.
+5. Capture artifacts:
+   - PCAP
+   - process tree
+   - file writes
+   - dropped files
+   - stdout/stderr if applicable
+   - memory dump if configured
+   - screenshots/video if using a GUI sandbox
+6. Stop execution after the analysis window.
+7. Export artifacts to a clean reporting location.
+8. Destroy or reset the execution container.
+
+PHASE 6 - Detection engineering
+
+1. Place confirmed malicious files and artifacts into a dedicated malware folder.
+2. Run yarGen against the folder to generate candidate YARA rules.
+3. Review generated strings manually.
+4. Remove overly generic strings.
+5. Test against known-good files to reduce false positives.
+6. Test against related malware variants.
+7. Save the final YARA rule with metadata:
+   - author
+   - date
+   - sample hash
+   - malware family if known
+   - source
+   - confidence level
+
+PHASE 7 - Automation
+
+1. Use a pipeline structure:
+
+   intake -> metadata -> triage -> unpack -> detonation -> artifact extraction
+   -> detection generation -> validation -> report
+
+2. Use async jobs or task queues for scale.
+3. Keep one sample per job.
+4. Keep job output directories immutable.
+5. Store all artifacts by SHA256.
+6. Use logs for every state transition.
+
+PHASE 8 - Reporting
+
+Each analysis report should include:
+
+1. Executive summary
+2. Sample metadata
+3. Behavioral summary
+4. Network indicators
+5. Host indicators
+6. Extracted files
+7. Detection logic
+8. YARA/Sigma/SIEM content
+9. Confidence rating
+10. Recommended response actions
+
+Minimum safety checklist
+------------------------
+
+Before detonation:
+
+[ ] Lab is remote or otherwise non-attributable.
+[ ] Network egress is blocked, proxied, or intentionally simulated.
+[ ] Container is not running as root.
+[ ] Execution host is disposable.
+[ ] Packet capture is running.
+[ ] File/process monitoring is running.
+[ ] Sample hash is recorded.
+[ ] Analyst knows rollback procedure.
+
+After detonation:
+
+[ ] Artifacts exported.
+[ ] IOCs extracted.
+[ ] Detections drafted.
+[ ] Container destroyed or reset.
+[ ] Credentials and tokens were not exposed.
+[ ] Report created.
+

@@ -1,0 +1,80 @@
+MODULE: DETONATION LAB - INDEX
+Part of: Phishing Triage Toolkit (see ../../WORKFLOW.txt)
+Reached from: ../README.txt, and from triage stages 1, 2 and 3
+Last reviewed: 2026-09-04
+
+WHEN YOU ARE HERE
+-----------------
+Static triage was not enough. You need to know what a sample actually does,
+which means running it — and running it safely is the entire problem this
+module addresses.
+
+Three ways to arrive:
+  stage 1  a URL serves an executable, archive, or installer rather than a
+           document
+  stage 2  the file is not OOXML, OLE2, PDF or RTF, or static analysis could
+           not resolve it
+  stage 3  the verdict is malicious and behaviour is still needed
+
+Read the safety notes at the bottom of this file before running anything in
+this directory.
+
+FILES
+-----
+
+00-index.txt
+  This index, and the safety rules that apply to everything else here.
+
+01-core-workflow.txt
+  The end-to-end pipeline in eight phases: safe infrastructure, sample
+  acquisition, initial triage, unpacking, containerised analysis, detection
+  engineering, automation, reporting.
+  Note: phases 6 and 8 overlap ../detection-engineering.txt, which is the
+  better version of that material. Treat them as a pointer.
+
+02-architecture.txt
+  Plain-text architecture diagrams and component layout for the lab -
+  network segmentation, which services see the sample, where evidence lands.
+
+03-docker-compose.txt
+  A copy-pasteable Docker Compose skeleton: non-root containers, isolated
+  analysis services, and the safety notes that go with each choice.
+
+04-pipeline-script.txt
+  A pipeline script template for sample intake, hashing, metadata creation,
+  staging, optional API hooks, and analysis-job handoff.
+
+05-deleted-file-monitoring.txt
+  A watcher that recovers files a sample deletes mid-detonation, wired into
+  phase 5 of the core workflow. Samples routinely delete their own payload
+  or log after use; this catches it while the handle is still open.
+  See also ../file-recovery.txt for the manual technique.
+
+expanded-notes.md
+  Background reading: why containers rather than VMs, the tools involved,
+  egress concerns, and why never to run the container as root.
+
+WHAT THIS MODULE HANDS BACK
+---------------------------
+  early IOCs (domains, IPs, URLs)   -> triage stage 1, for URL triage
+  unpacked payload hashes           -> triage stage 2 / stage 3
+  the sample's actual behaviour     -> triage stage 3, the verdict
+  YARA candidates and IOCs          -> ../detection-engineering.txt
+
+IMPORTANT SAFETY NOTES
+----------------------
+These apply to everything in this directory, without exception.
+
+1. Do not detonate malware on your personal or work workstation.
+2. Do not allow uncontrolled outbound internet access from an execution host.
+   C2 callbacks trace back to whatever IP you gave them.
+3. Do not run malware containers as root.
+4. Use disposable infrastructure and snapshots. Assume the environment is
+   burned after every run.
+5. Assume live malware will attempt discovery, evasion, lateral movement,
+   and C2. Design for that rather than hoping this sample is simple.
+6. Do not use your home or corporate IP for a detonation environment.
+7. Keep sample storage, execution, and reporting separated.
+
+Detonation on a machine that can reach production is not analysis. It is an
+incident, and it will be your incident.

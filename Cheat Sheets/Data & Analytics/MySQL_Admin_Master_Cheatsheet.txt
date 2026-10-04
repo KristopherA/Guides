@@ -1,0 +1,826 @@
+================================================================================
+MYSQL ADMINISTRATION AND REPLICATION CHEAT SHEET
+Tool: MySQL Server (mysql, mysqladmin, mysqldump, mysqlbinlog, mysqlcheck, mysql_config_editor, mysqlsh)
+OS coverage: MySQL 8.0 / 8.4 LTS on Ubuntu 24.04 LTS (legacy 5.7 / pre-8.0.22 syntax noted inline)
+Generated: 2026-10-04
+Owner: it@example.com
+Related guide: Databases/mysql-administration-guide.md
+================================================================================
+
+Note: Examples use --login-path=admin (credentials stored by mysql_config_editor,
+never on the command line). Replication pair is db01.example.com (source) and
+db02.example.com (replica). Passwords come from 1Password; none appear in this sheet.
+Syntax rule of thumb: REPLICA / SOURCE commands need 8.0.22+ and are the only
+form in 8.4; SLAVE / MASTER commands work up to 8.0 and are removed in 8.4.
+Patching runbook: Databases/mysql replication patching.txt (replica first).
+
+
+SERVICE CONTROL AND CLIENT LOGIN
+--------------------------------------------------------------------------------
+
+COMMAND
+  systemctl status mysql  /  systemctl restart mysql
+
+DESCRIPTION
+  Checks or restarts the MySQL service. On Ubuntu the unit is mysql, not mysqld; avoid the old service and /etc/init.d forms in new procedures.
+
+USAGE
+  sudo systemctl status mysql --no-pager
+
+SUCCESS
+  mysql.service - MySQL Community Server
+       Loaded: loaded (/usr/lib/systemd/system/mysql.service; enabled; preset: enabled)
+       Active: active (running) since Sat 2026-10-04 03:12:44 ADT; 18h ago
+
+FAILURE
+  Active: failed (Result: exit-code) since Sat 2026-10-04 03:12:44 ADT
+  (Read /var/log/mysql/error.log and journalctl -xe | grep -i apparmor; a bad option in 99-org.cnf or an AppArmor DENIED is typical.)
+
+---
+
+COMMAND
+  mysql_config_editor set --login-path=<name> --host=<host> --user=<user> --password
+
+DESCRIPTION
+  Stores credentials in ~/.mylogin.cnf so scripts and cron jobs need no inline password. The file is obfuscated, not encrypted, so keep it mode 600.
+
+USAGE
+  mysql_config_editor set --login-path=admin --host=localhost --user=orgadmin --password && mysql_config_editor print --login-path=admin
+
+SUCCESS
+  Enter password:
+  [admin]
+  user = "orgadmin"
+  password = *****
+  host = "localhost"
+
+FAILURE
+  ERROR 1045 (28000): Access denied for user 'orgadmin'@'localhost' (using password: YES)
+  (Seen on first use: password mistyped, or it contains a shell character such as a hash sign; re-run set and wrap the password in double quotes at the prompt.)
+
+---
+
+COMMAND
+  mysql --login-path=<name> [-e "<statement>"]
+
+DESCRIPTION
+  Opens the client with stored credentials, or runs one statement with -e for scripts. On a fresh Ubuntu install sudo mysql logs in as root via auth_socket with no password.
+
+USAGE
+  mysql --login-path=admin -e "SELECT CURRENT_USER(), @@hostname, @@version;"
+
+SUCCESS
+  +--------------------+-------------+-------------------------+
+  | CURRENT_USER()     | @@hostname  | @@version               |
+  +--------------------+-------------+-------------------------+
+  | orgadmin@localhost | db01        | 8.0.43-0ubuntu0.24.04.1 |
+  +--------------------+-------------+-------------------------+
+
+FAILURE
+  ERROR 3159 (HY000): Connections using insecure transport are prohibited while --require_secure_transport=ON.
+  (Remote client is not using TLS; add --ssl-mode=REQUIRED or VERIFY_IDENTITY with --ssl-ca. Do not turn off require_secure_transport.)
+
+---
+
+COMMAND
+  mysqladmin --login-path=<name> status
+
+DESCRIPTION
+  Quick liveness and load check: uptime, threads, slow query count and queries per second. mysqladmin version adds server version and socket.
+
+USAGE
+  mysqladmin --login-path=admin status
+
+SUCCESS
+  Uptime: 1209631  Threads: 14  Questions: 88123311  Slow queries: 12  Opens: 2411  Flush tables: 3  Open tables: 1987  Queries per second avg: 72.851
+
+FAILURE
+  mysqladmin: connect to server at 'localhost' failed
+  error: 'Can't connect to local MySQL server through socket '/var/run/mysqld/mysqld.sock' (2)'
+  (mysqld is not running; check systemctl status mysql.)
+
+---
+
+COMMAND
+  tail -n <lines> /var/log/mysql/error.log  /  journalctl -u mysql
+
+DESCRIPTION
+  The error log is the first place to look for startup failures, TLS problems and crash recovery. journalctl shows systemd-side failures such as AppArmor denials.
+
+USAGE
+  sudo tail -n 50 /var/log/mysql/error.log ; sudo journalctl -u mysql --since today --no-pager
+
+SUCCESS
+  [System] [MY-010931] [Server] /usr/sbin/mysqld: ready for connections. Version: '8.0.43-0ubuntu0.24.04.1'  socket: '/var/run/mysqld/mysqld.sock'  port: 3306  (Ubuntu).
+
+FAILURE
+  [ERROR] [MY-000067] [Server] unknown variable 'expire_logs_days=7'.
+  [ERROR] [MY-010119] [Server] Aborting
+  (Option removed in 8.4; replace with binlog_expire_logs_seconds in /etc/mysql/mysql.conf.d/99-org.cnf.)
+
+---
+
+
+SESSIONS, USERS AND GRANTS
+--------------------------------------------------------------------------------
+
+COMMAND
+  SHOW FULL PROCESSLIST;
+
+DESCRIPTION
+  Lists every connection with user, host, database, state and running time. Look for long Time values, "Waiting for table metadata lock" and replication threads.
+
+USAGE
+  mysql --login-path=admin -e "SHOW FULL PROCESSLIST;" | awk '$6 > 60'
+
+SUCCESS
+  Id     User         Host                db       Command  Time  State                     Info
+  4821   appdb1_app   10.0.20.31:51122    appdb1   Query    142   Sending data              SELECT * FROM orders WHERE ...
+  12     system user                      NULL     Connect  9411  Replica has read all relay log; waiting for more updates  NULL
+
+FAILURE
+  Only your own connection is listed.
+  (Account lacks the PROCESS privilege; use an admin login-path.)
+
+---
+
+COMMAND
+  KILL [QUERY] <id>;
+
+DESCRIPTION
+  Ends a runaway query (KILL QUERY) or the whole connection (KILL). Get the Id from SHOW PROCESSLIST; never kill the replication system user threads.
+
+USAGE
+  mysql --login-path=admin -e "KILL QUERY 4821;"
+
+SUCCESS
+  Query OK, 0 rows affected (0.00 sec)
+
+FAILURE
+  ERROR 1094 (HY000): Unknown thread id: 4821
+  (The query already finished, or the Id was mistyped. ERROR 1095 "You are not owner of thread" means you need CONNECTION_ADMIN.)
+
+---
+
+COMMAND
+  CREATE USER '<user>'@'<host>' IDENTIFIED BY '<password>' REQUIRE SSL;
+
+DESCRIPTION
+  Creates an account bound to a specific host and forced onto TLS. Use a generated password from 1Password; PASSWORD() and IDENTIFIED BY PASSWORD were removed in 8.0.
+
+USAGE
+  CREATE USER 'replicant'@'<db02-ip>' IDENTIFIED WITH caching_sha2_password BY '<from 1Password>' REQUIRE SSL;
+
+SUCCESS
+  Query OK, 0 rows affected (0.02 sec)
+
+FAILURE
+  ERROR 1396 (HY000): Operation CREATE USER failed for 'replicant'@'<db02-ip>'
+  (Account already exists; use ALTER USER to change it, or DROP USER first if rebuilding.)
+
+---
+
+COMMAND
+  GRANT <privileges> ON <db>.<table> TO '<user>'@'<host>';
+
+DESCRIPTION
+  Grants privileges to an existing account. In MySQL 8 GRANT no longer creates users, so CREATE USER must come first. The replication privilege is still named REPLICATION SLAVE.
+
+USAGE
+  GRANT REPLICATION SLAVE ON *.* TO 'replicant'@'<db02-ip>';
+
+SUCCESS
+  Query OK, 0 rows affected (0.01 sec)
+
+FAILURE
+  ERROR 1410 (42000): You are not allowed to create a user with GRANT
+  (User or host part does not match an existing account exactly; check SELECT user, host FROM mysql.user.)
+
+---
+
+COMMAND
+  SHOW GRANTS FOR '<user>'@'<host>';
+
+DESCRIPTION
+  Shows exactly what an account can do, including dynamic privileges. Use it before and after any change and during access reviews.
+
+USAGE
+  mysql --login-path=admin -e "SHOW GRANTS FOR 'appdb1_app'@'10.0.20.%';"
+
+SUCCESS
+  GRANT USAGE ON *.* TO `appdb1_app`@`10.0.20.%`
+  GRANT SELECT, INSERT, UPDATE, DELETE ON `appdb1`.* TO `appdb1_app`@`10.0.20.%`
+
+FAILURE
+  ERROR 1141 (42000): There is no such grant defined for user 'appdb1_app' on host '%'
+  (Host part is wrong; accounts are user plus host, so list them from mysql.user.)
+
+---
+
+
+BACKUP, RESTORE AND BINARY LOGS
+--------------------------------------------------------------------------------
+
+COMMAND
+  mysqldump --login-path=<name> --single-transaction --routines --source-data=2 --databases <db>
+
+DESCRIPTION
+  Consistent logical backup of InnoDB without blocking writers, including routines and the binlog position for point-in-time recovery. --source-data replaces --master-data from 8.0.26; use utf8mb4, not utf8.
+
+USAGE
+  mysqldump --login-path=backups --single-transaction --routines --default-character-set=utf8mb4 --source-data=2 --dump-date --databases appdb1 > /home/orgadmin/AppDB1MySQLBackUps/appdb1dump_$(date +%F).sql
+
+SUCCESS
+  (No output on success.)
+  ls -lh /home/orgadmin/AppDB1MySQLBackUps/ then shows: -rw-r--r-- 1 root root 412M Oct  4 03:00 appdb1dump_2026-10-04.sql
+
+FAILURE
+  mysqldump: Couldn't execute 'FLUSH TABLES WITH READ LOCK': Access denied; you need (at least one of) the RELOAD or FLUSH_TABLES privilege(s) for this operation (1227)
+  (Backup account needs RELOAD for --source-data; in crontab also escape % as \%.)
+
+---
+
+COMMAND
+  mysql --login-path=<name> < <dumpfile.sql>
+
+DESCRIPTION
+  Restores a logical dump. A dump made with --databases recreates the database itself; read the CHANGE REPLICATION SOURCE TO comment near the top for the binlog position to replay from.
+
+USAGE
+  mysql --login-path=admin < /home/orgadmin/AppDB1MySQLBackUps/appdb1dump_2026-10-03.sql
+
+SUCCESS
+  (No output; returns to prompt. Verify with SELECT COUNT(*) on key tables.)
+
+FAILURE
+  ERROR 3546 (HY000) at line 24: @@GLOBAL.GTID_PURGED cannot be changed: the added gtid set must not overlap with @@GLOBAL.GTID_EXECUTED
+  (GTID server and dump carries GTID_PURGED; restore into a clean instance, or re-dump with --set-gtid-purged=OFF if appropriate.)
+
+---
+
+COMMAND
+  SHOW BINARY LOGS;  /  PURGE BINARY LOGS BEFORE '<datetime>';
+
+DESCRIPTION
+  Lists binary logs with sizes, and purges old ones through MySQL. Never rm binlog files by hand, and never purge a log the replica has not read (check its Source_Log_File first).
+
+USAGE
+  mysql --login-path=admin -e "SHOW BINARY LOGS; PURGE BINARY LOGS BEFORE NOW() - INTERVAL 7 DAY;"
+
+SUCCESS
+  Log_name          File_size   Encrypted
+  mysql-bin.000041  1073742318  No
+  mysql-bin.000042  218823771   No
+  Query OK, 0 rows affected (0.03 sec)
+
+FAILURE
+  Warning | 1867 | file ./mysql-bin.000041 was not purged because it was being read by 1 thread(s), purged only 3 out of 5 files.
+  (A replica or binlog streaming job is still reading it; let it catch up.)
+
+---
+
+COMMAND
+  mysqlbinlog --base64-output=decode-rows --verbose <binlog>
+
+DESCRIPTION
+  Decodes a binary log into readable row events. With ROW format these flags are essential, otherwise events are opaque base64. Always dump to a file and read before replaying.
+
+USAGE
+  mysqlbinlog --base64-output=decode-rows --verbose --start-datetime="2026-10-03 09:55:00" --stop-datetime="2026-10-03 10:05:00" /var/log/mysql/mysql-bin.000042 | grep -oE '(Write|Update|Delete)_rows: table id [0-9]+' | sort | uniq -c
+
+SUCCESS
+       42 Delete_rows: table id 112
+        6 Update_rows: table id 98
+       17 Write_rows: table id 112
+
+FAILURE
+  mysqlbinlog: File '/var/log/mysql/mysql-bin.000042' not found (OS errno 2 - No such file or directory)
+  (Wrong path or already purged; check SHOW BINARY LOGS and log_bin.)
+
+---
+
+COMMAND
+  mysqlbinlog --stop-datetime="<t>" <binlog> | mysql   then   --start-datetime="<t>"
+
+DESCRIPTION
+  Point-in-time recovery after restoring the last dump: replay up to just before the bad statement, then resume just after it. Positions (--stop-position, --start-position) are more precise than timestamps.
+
+USAGE
+  mysqlbinlog --stop-position=368312 /var/log/mysql/mysql-bin.000042 | mysql --login-path=admin
+
+SUCCESS
+  (No output; returns to prompt. Then replay from --start-position=368315 onward.)
+
+FAILURE
+  ERROR 1062 (23000) at line 87: Duplicate entry '1042' for key 'orders.PRIMARY'
+  (Replay started before the dump position; begin at the position recorded in the dump header.)
+
+---
+
+
+REPLICATION (RUN ON db02.example.com UNLESS NOTED)
+--------------------------------------------------------------------------------
+
+COMMAND
+  SHOW REPLICA STATUS\G      (pre-8.0.22: SHOW SLAVE STATUS\G)
+
+DESCRIPTION
+  The core replication health check. Key fields: Replica_IO_Running, Replica_SQL_Running, Seconds_Behind_Source, Replica_SQL_Running_State, Read/Exec_Source_Log_Pos, Relay_Log_Space, Last_IO_Error, Last_SQL_Error. Old names use Slave_ and Master.
+
+USAGE
+  mysql --login-path=admin -e "SHOW REPLICA STATUS\G" | grep -E 'Running:|Behind|State:|_Pos:|Relay_Log_Space|Last_(IO|SQL)_Error:'
+
+SUCCESS
+  Replica_IO_Running: Yes
+  Replica_SQL_Running: Yes
+  Seconds_Behind_Source: 0
+  Replica_SQL_Running_State: Replica has read all relay log; waiting for more updates
+  Read_Source_Log_Pos: 218823771
+  Exec_Source_Log_Pos: 218823771
+  Last_IO_Error:
+  Last_SQL_Error:
+
+FAILURE
+  Replica_IO_Running: Connecting
+  Last_IO_Error: error connecting to source 'replicant@<db01-ip>:3306' - retry-time: 60 retries: 3 message: Authentication plugin 'caching_sha2_password' reported error: Authentication requires secure connection.
+  (Replica is not using TLS; set SOURCE_SSL=1. Other causes: wrong grant host, password, or port 3306 blocked.)
+
+---
+
+COMMAND
+  watch -n 5 'mysql -e "SHOW REPLICA STATUS\G" | egrep "<fields>"'
+
+DESCRIPTION
+  Live view while the replica catches up. With row-based replication Seconds_Behind_Source can read 0 mid-transaction; wait until Relay_Log_Space stops growing and the SQL state is idle.
+
+USAGE
+  watch -n 5 'mysql --login-path=admin -e "SHOW REPLICA STATUS\G" | egrep "Replica_IO_Running:|Replica_SQL_Running:|Seconds_Behind_Source:|Relay_Log_Space:|Replica_SQL_Running_State:"'
+
+SUCCESS
+  Replica_IO_Running: Yes
+  Replica_SQL_Running: Yes
+  Seconds_Behind_Source: 0
+  Relay_Log_Space: 1183 (unchanged between refreshes)
+  Replica_SQL_Running_State: Replica has read all relay log; waiting for more updates
+
+FAILURE
+  Seconds_Behind_Source: 0
+  Replica_SQL_Running_State: Applying batch of row changes (update)
+  (Large transaction still applying; do not start work on db01.example.com yet. On 8.0.21 and older grep Slave_ and Seconds_Behind_Master instead.)
+
+---
+
+COMMAND
+  STOP REPLICA;  /  START REPLICA;      (pre-8.0.22: STOP SLAVE; / START SLAVE;)
+
+DESCRIPTION
+  Stops or starts both replication threads. Stop cleanly on the replica before patching or rebooting it, then start and verify after.
+
+USAGE
+  mysql --login-path=admin -e "STOP REPLICA;"   ...patch and reboot db02.example.com...   mysql --login-path=admin -e "START REPLICA;"
+
+SUCCESS
+  Query OK, 0 rows affected (0.01 sec)
+
+FAILURE
+  ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'REPLICA' at line 1
+  (Server is older than 8.0.22; use STOP SLAVE / START SLAVE. On 8.4 the reverse happens: SLAVE syntax errors.)
+
+---
+
+COMMAND
+  SHOW BINARY LOG STATUS;      (8.0 and older: SHOW MASTER STATUS;)
+
+DESCRIPTION
+  Run on the source (db01.example.com). Shows the current binlog file, position and executed GTID set; compare with the replica Exec_Source_Log_Pos before patching the source.
+
+USAGE
+  mysql --login-path=admin -h db01.example.com --ssl-mode=VERIFY_IDENTITY -e "SHOW MASTER STATUS\G"
+
+SUCCESS
+               File: mysql-bin.000042
+           Position: 218823771
+  Executed_Gtid_Set: 3e11fa47-71ca-11e1-9e33-c80aa9429562:1-77
+  (Executed_Gtid_Set is empty when GTID is off.)
+
+FAILURE
+  Empty set (0.00 sec)
+  (Binary logging is off; check log_bin and server_id in /etc/mysql/mysql.conf.d/99-org.cnf.)
+
+---
+
+COMMAND
+  CHANGE REPLICATION SOURCE TO ...;      (pre-8.0.23: CHANGE MASTER TO ...;)
+
+DESCRIPTION
+  Points the replica at the source. Use file and position from the source, or SOURCE_AUTO_POSITION=1 when GTID is enabled. SOURCE_SSL=1 is required because TLS is enforced.
+
+USAGE
+  STOP REPLICA; CHANGE REPLICATION SOURCE TO SOURCE_HOST='<db01-ip>', SOURCE_USER='replicant', SOURCE_PASSWORD='<from 1Password>', SOURCE_LOG_FILE='mysql-bin.000042', SOURCE_LOG_POS=218823771, SOURCE_SSL=1; START REPLICA;
+
+SUCCESS
+  Query OK, 0 rows affected, 1 warning (0.03 sec)
+  (Warning 1759 about storing credentials in the connection metadata repository is normal.)
+
+FAILURE
+  ERROR 3021 (HY000): This operation cannot be performed with a running replica io thread; run STOP REPLICA IO_THREAD FOR CHANNEL '' first.
+  (Run STOP REPLICA before changing the source.)
+
+---
+
+COMMAND
+  SET GLOBAL SQL_REPLICA_SKIP_COUNTER = 1;      (pre-8.0.26: SQL_SLAVE_SKIP_COUNTER)
+
+DESCRIPTION
+  Skips one event group when the SQL thread has stopped on an error you fully understand. Each skip is data the replica will not have; investigate Last_SQL_Error first, especially duplicate-key errors under ROW format.
+
+USAGE
+  STOP REPLICA; SET GLOBAL SQL_REPLICA_SKIP_COUNTER = 1; START REPLICA; SHOW REPLICA STATUS\G
+
+SUCCESS
+  Query OK, 0 rows affected (0.00 sec)
+  Replica_SQL_Running: Yes
+  Last_SQL_Error:
+
+FAILURE
+  ERROR 1858 (HY000): sql_replica_skip_counter can not be set when the server is running with @@GLOBAL.GTID_MODE = ON. Instead, for each transaction that you want to skip, generate an empty transaction with the same GTID as the transaction
+  (GTID is on; use the GTID_NEXT empty-transaction method below.)
+
+---
+
+COMMAND
+  SET GTID_NEXT='<uuid>:<n>'; BEGIN; COMMIT; SET GTID_NEXT='AUTOMATIC';
+
+DESCRIPTION
+  GTID-mode equivalent of skipping one transaction: commit an empty transaction under the failing GTID. Check SELECT @@gtid_mode first and take the GTID from Last_SQL_Error or the performance_schema applier tables.
+
+USAGE
+  STOP REPLICA; SET GTID_NEXT='3e11fa47-71ca-11e1-9e33-c80aa9429562:78'; BEGIN; COMMIT; SET GTID_NEXT='AUTOMATIC'; START REPLICA;
+
+SUCCESS
+  Query OK, 0 rows affected (0.00 sec)
+  SHOW REPLICA STATUS\G then shows Replica_SQL_Running: Yes and :1-78 in Executed_Gtid_Set.
+
+FAILURE
+  ERROR 1837 (HY000): When @@SESSION.GTID_NEXT is set to a GTID, you must explicitly set it to a different value after a COMMIT or ROLLBACK.
+  (You forgot SET GTID_NEXT='AUTOMATIC' before running another statement.)
+
+---
+
+COMMAND
+  SET GLOBAL super_read_only = ON;
+
+DESCRIPTION
+  Blocks writes from all accounts, including SUPER, and implies read_only. Keep the replica permanently read-only; set it on the source briefly to freeze writes before patching. Use SET PERSIST to survive restarts.
+
+USAGE
+  mysql --login-path=admin -e "SET GLOBAL super_read_only = ON; SELECT @@read_only, @@super_read_only;"
+
+SUCCESS
+  @@read_only  @@super_read_only
+  1            1
+
+FAILURE
+  ERROR 1290 (HY000): The MySQL server is running with the --super-read-only option so it cannot execute this statement
+  (This is the protection working when an application writes. If it appears on db01.example.com after maintenance, set super_read_only = OFF then read_only = OFF.)
+
+---
+
+
+PERFORMANCE AND TABLE MAINTENANCE
+--------------------------------------------------------------------------------
+
+COMMAND
+  EXPLAIN <query>;  /  EXPLAIN ANALYZE <query>;
+
+DESCRIPTION
+  EXPLAIN shows the planned access path and index use; EXPLAIN ANALYZE (8.0.18+) actually runs the query and reports real timings and row counts. Look for full table scans (type: ALL) and large row estimates.
+
+USAGE
+  EXPLAIN ANALYZE SELECT * FROM appdb1.orders WHERE customer_id = 1042 AND created_at > '2026-09-01';
+
+SUCCESS
+  -> Index range scan on orders using idx_customer_created over (customer_id = 1042 AND '2026-09-01' < created_at)  (cost=12.4 rows=27) (actual time=0.041..0.112 rows=27 loops=1)
+
+FAILURE
+  -> Filter: ((orders.customer_id = 1042) and (orders.created_at > '2026-09-01'))  (actual time=0.06..812.4 rows=27 loops=1)
+      -> Table scan on orders  (actual time=0.05..781.9 rows=1840211 loops=1)
+  (No usable index; consider a composite index on customer_id, created_at.)
+
+---
+
+COMMAND
+  SET PERSIST slow_query_log = ON;  then  mysqldumpslow
+
+DESCRIPTION
+  Enables the slow query log at runtime (persisted across restarts) and summarises it. long_query_time is in seconds; mysqldumpslow -s t sorts by total time.
+
+USAGE
+  mysql --login-path=admin -e "SET PERSIST slow_query_log_file='/var/log/mysql/mysql-slow.log'; SET PERSIST long_query_time=1; SET PERSIST slow_query_log=ON;" && sudo mysqldumpslow -s t -t 5 /var/log/mysql/mysql-slow.log
+
+SUCCESS
+  Count: 412  Time=2.31s (951s)  Lock=0.00s (0s)  Rows=27.0 (11124), appdb1_app[appdb1_app]@[10.0.20.31]
+    SELECT * FROM orders WHERE customer_id = N AND created_at > 'S'
+
+FAILURE
+  ERROR 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
+  (Use an admin account. If the log file stays empty, check AppArmor allows writes to that path.)
+
+---
+
+COMMAND
+  SHOW ENGINE INNODB STATUS\G
+
+DESCRIPTION
+  Dumps InnoDB internals: latest detected deadlock, lock waits, buffer pool usage and I/O. Read the LATEST DETECTED DEADLOCK and TRANSACTIONS sections first.
+
+USAGE
+  mysql --login-path=admin -e "SHOW ENGINE INNODB STATUS\G" | sed -n '/LATEST DETECTED DEADLOCK/,/TRANSACTIONS/p'
+
+SUCCESS
+  LATEST DETECTED DEADLOCK
+  ------------------------
+  2026-10-04 14:02:17 140211998123584
+  *** (1) TRANSACTION: ... *** WE ROLL BACK TRANSACTION (2)
+  (No output from the sed range means no deadlock since startup.)
+
+FAILURE
+  ERROR 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+  (Account lacks PROCESS; use an admin login-path.)
+
+---
+
+COMMAND
+  SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
+
+DESCRIPTION
+  Confirms the live buffer pool size, not just the value in the config file. Typical target on a dedicated server is 50 to 75 percent of RAM; the read ratio shows whether it is big enough.
+
+USAGE
+  mysql --login-path=admin -e "SELECT @@innodb_buffer_pool_size/1024/1024/1024 AS bp_gb, @@innodb_redo_log_capacity/1024/1024/1024 AS redo_gb; SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_read%requests'; SHOW GLOBAL STATUS LIKE 'Innodb_buffer_pool_reads';"
+
+SUCCESS
+  bp_gb    redo_gb
+  32.0000  4.0000
+  Innodb_buffer_pool_read_requests  9123448812
+  Innodb_buffer_pool_reads          1840211
+
+FAILURE
+  bp_gb
+  0.1250
+  (134217728 bytes is the compiled-in default: your .cnf is not being loaded. In Docker, check the bind mount into /etc/mysql/conf.d with docker inspect.)
+
+---
+
+COMMAND
+  mysqlcheck --login-path=<name> --all-databases --check
+
+DESCRIPTION
+  Server-side CHECK TABLE across every table. Prefer it over myisamchk, which must only run with mysqld stopped. Add --analyze to refresh index statistics.
+
+USAGE
+  mysqlcheck --login-path=admin --databases appdb1 --check
+
+SUCCESS
+  appdb1.customers                                  OK
+  appdb1.orders                                     OK
+
+FAILURE
+  appdb1.legacy_log
+  error    : Table upgrade required. Please do "REPAIR TABLE `legacy_log`" or dump/reload to fix it!
+  (Old-format or MyISAM table; take a dump first, then repair or convert to InnoDB.)
+
+---
+
+COMMAND
+  OPTIMIZE TABLE <db>.<table>;  /  ANALYZE TABLE <db>.<table>;
+
+DESCRIPTION
+  OPTIMIZE rebuilds an InnoDB table to reclaim space after large deletes; ANALYZE refreshes optimizer statistics cheaply. OPTIMIZE needs free disk roughly the size of the table.
+
+USAGE
+  mysql --login-path=admin -e "OPTIMIZE TABLE appdb1.audit_log;"
+
+SUCCESS
+  Table              Op        Msg_type  Msg_text
+  appdb1.audit_log  optimize  note      Table does not support optimize, doing recreate + analyze instead
+  appdb1.audit_log  optimize  status    OK
+
+FAILURE
+  ERROR 1205 (HY000): Lock wait timeout exceeded; try restarting transaction
+  (A long transaction holds a metadata lock on the table; find it in SHOW PROCESSLIST and run in a quiet window.)
+
+---
+
+
+TLS AND CERTIFICATES
+--------------------------------------------------------------------------------
+
+COMMAND
+  SHOW VARIABLES LIKE '%ssl%';  /  SHOW STATUS LIKE 'Ssl_server_not_after';
+
+DESCRIPTION
+  Confirms the configured certificate paths and the expiry date of the certificate MySQL has actually loaded. MySQL 8 self-generates certs if none are set, so check the paths, not just that TLS works.
+
+USAGE
+  mysql --login-path=admin -e "SHOW VARIABLES WHERE Variable_name IN ('ssl_ca','ssl_cert','ssl_key','require_secure_transport','tls_version'); SHOW STATUS LIKE 'Ssl_server_not_after';"
+
+SUCCESS
+  ssl_ca                    /etc/mysql/thawteroot.pem
+  ssl_cert                  /etc/mysql/wildcardcert.pem
+  ssl_key                   /etc/mysql/wildcardkey.pem
+  require_secure_transport  ON
+  tls_version               TLSv1.2,TLSv1.3
+  Ssl_server_not_after      Jun 14 23:59:59 2027 GMT
+
+FAILURE
+  ssl_cert                  server-cert.pem
+  (Auto-generated self-signed cert in the datadir is in use: the organization's cert paths are missing from 99-org.cnf or failed to load; check error.log.)
+
+---
+
+COMMAND
+  SHOW SESSION STATUS LIKE 'Ssl_cipher';
+
+DESCRIPTION
+  Shows whether your own connection is encrypted and with what cipher. Replaces the have_ssl / have_openssl checks, which are deprecated in 8.0 and removed in 8.4.
+
+USAGE
+  mysql --login-path=admin -h db01.example.com --ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/mysql/thawteroot.pem -e "SHOW SESSION STATUS LIKE 'Ssl_%ion'; SHOW SESSION STATUS LIKE 'Ssl_cipher';"
+
+SUCCESS
+  Ssl_version  TLSv1.3
+  Ssl_cipher   TLS_AES_256_GCM_SHA384
+
+FAILURE
+  ERROR 2026 (HY000): SSL connection error: error:0A000086:SSL routines::certificate verify failed
+  (Client does not trust the server CA, or the hostname is not in the certificate SAN; check --ssl-ca and the name used.)
+
+---
+
+COMMAND
+  openssl s_client -connect <host>:3306 -starttls mysql
+
+DESCRIPTION
+  Inspects the certificate MySQL presents from outside the server, including chain, subject and expiry. Needs OpenSSL 1.1.1 or later for -starttls mysql.
+
+USAGE
+  openssl s_client -connect db02.example.com:3306 -starttls mysql -servername db02.example.com </dev/null 2>/dev/null | openssl x509 -noout -subject -enddate
+
+SUCCESS
+  subject=CN = *.example.com
+  notAfter=Jun 14 23:59:59 2027 GMT
+
+FAILURE
+  MySQL server does not support SSL.
+  (TLS not configured or not loaded on that instance; check ssl_cert and error.log.)
+
+---
+
+COMMAND
+  openssl x509 -noout -modulus -in <cert> | openssl md5   (and same for the key)
+
+DESCRIPTION
+  Confirms a new certificate and private key belong together before swapping them in. The two hashes must match exactly (RSA keys).
+
+USAGE
+  openssl x509 -noout -modulus -in /etc/mysql/wildcardcert-new.pem | openssl md5 ; sudo openssl rsa -noout -modulus -in /etc/mysql/wildcardkey-new.pem | openssl md5
+
+SUCCESS
+  MD5(stdin)= 4f1c2a9e0b7d3e6c8a5f1d2b9c0e7a31
+  MD5(stdin)= 4f1c2a9e0b7d3e6c8a5f1d2b9c0e7a31
+
+FAILURE
+  MD5(stdin)= 4f1c2a9e0b7d3e6c8a5f1d2b9c0e7a31
+  MD5(stdin)= 9a0e3b77c21f5d48e6a1c9b2f04d8e13
+  (Key does not match the certificate; do not install. Find the key the CSR was generated with.)
+
+---
+
+COMMAND
+  ALTER INSTANCE RELOAD TLS;
+
+DESCRIPTION
+  Loads replaced certificate files without restarting MySQL; existing connections keep the old context, new ones get the new cert. Set key ownership root:mysql mode 640 first. Rotate db02.example.com before db01.example.com.
+
+USAGE
+  mysql --login-path=admin -e "ALTER INSTANCE RELOAD TLS; SHOW STATUS LIKE 'Ssl_server_not_after';"
+
+SUCCESS
+  Query OK, 0 rows affected (0.01 sec)
+  Ssl_server_not_after  Jun 14 23:59:59 2027 GMT
+
+FAILURE
+  ERROR 3888 (HY000): Failed to set up SSL because of the following SSL library error: Unable to get private key
+  (mysql user cannot read the key, or key and cert do not match. The old TLS context stays active; fix and reload again.)
+
+---
+
+
+UPGRADE CHECKS AND SECURITY AUDIT
+--------------------------------------------------------------------------------
+
+COMMAND
+  mysqlsh -- util checkForServerUpgrade <user>@<host>:3306 --target-version=<version>
+
+DESCRIPTION
+  MySQL Shell upgrade checker. Reports removed options, deprecated auth plugins and incompatible objects before a major upgrade such as 8.0 to 8.4. Always take a full dump first; the data dictionary upgrade is one-way.
+
+USAGE
+  mysqlsh -- util checkForServerUpgrade orgadmin@localhost:3306 --target-version=8.4.6 --config-path=/etc/mysql/my.cnf --output-format=TEXT
+
+SUCCESS
+  Errors:   0
+  Warnings: 2
+  Notices:  1
+  No fatal errors were found that would prevent an upgrade, but some potential issues were detected. Please ensure that the reported issues are not significant before upgrading.
+
+FAILURE
+  1) Removed system variables
+    Error: Following system variables that were detected as being used will be removed. expire_logs_days - is set and will be removed
+  Errors:   1
+  ERROR: 1 errors were found. Please correct these issues before upgrading to avoid compatibility issues.
+
+---
+
+COMMAND
+  grep -rnE 'SLAVE|MASTER|Slave_|_Master' <script-dirs>
+
+DESCRIPTION
+  Finds scripts and monitoring checks still using the old replication vocabulary. After an upgrade to 8.4 they fail or silently match nothing, so fix them before the upgrade.
+
+USAGE
+  sudo grep -rnE 'SHOW SLAVE|START SLAVE|STOP SLAVE|SHOW MASTER|Slave_IO_Running|Seconds_Behind_Master|master-data' /usr/local/bin /home/orgadmin/*.sh /etc/cron.d
+
+SUCCESS
+  (No output: nothing still depends on the removed syntax.)
+
+FAILURE
+  /home/orgadmin/MySQLNightlyBackup.sh:4:/usr/bin/mysqldump ... --master-data=2 ...
+  /usr/local/bin/check_repl.sh:7:mysql -e "SHOW SLAVE STATUS\G" | grep Slave_IO_Running
+  (Update to --source-data, SHOW REPLICA STATUS and Replica_IO_Running.)
+
+---
+
+COMMAND
+  SELECT user, host FROM mysql.user WHERE host IN ('%','');
+
+DESCRIPTION
+  Finds accounts that can connect from any host or are anonymous. Each one should be justified or narrowed to a specific host or subnet.
+
+USAGE
+  mysql --login-path=admin -e "SELECT user, host, account_locked, password_last_changed FROM mysql.user WHERE host IN ('%','') OR user = '' ORDER BY user;"
+
+SUCCESS
+  Empty set (0.00 sec)
+
+FAILURE
+  user         host  account_locked  password_last_changed
+  replicant    %     N               2018-11-14 10:22:05
+  (Wildcard host and a 2018 password: narrow the host and rotate the credential from 1Password.)
+
+---
+
+COMMAND
+  SELECT user, host, plugin, ssl_type FROM mysql.user WHERE ...;
+
+DESCRIPTION
+  Lists accounts not forced onto TLS (empty ssl_type) or still on mysql_native_password, which is deprecated in 8.0 and disabled by default in 8.4.
+
+USAGE
+  mysql --login-path=admin -e "SELECT user, host, plugin, ssl_type FROM mysql.user WHERE user NOT LIKE 'mysql.%' AND (ssl_type = '' OR plugin = 'mysql_native_password');"
+
+SUCCESS
+  user      host       plugin       ssl_type
+  root      localhost  auth_socket
+  (Local socket-only root without REQUIRE SSL is expected.)
+
+FAILURE
+  user     host        plugin                 ssl_type
+  gp_odbc  10.0.30.%   mysql_native_password
+  (Migrate to caching_sha2_password with ALTER USER and add REQUIRE SSL; confirm the Dynamics GP ODBC connector is 8.x first.)
+
+---
+
+COMMAND
+  SELECT ... FROM mysql.user / mysql.global_grants WHERE <high privileges>;
+
+DESCRIPTION
+  Audits who holds powerful static privileges (SUPER, FILE, GRANT, SHUTDOWN) and dynamic admin privileges. Application accounts should hold none of them.
+
+USAGE
+  mysql --login-path=admin -e "SELECT user, host FROM mysql.user WHERE Super_priv='Y' OR File_priv='Y' OR Grant_priv='Y' OR Shutdown_priv='Y'; SELECT user, host, priv FROM mysql.global_grants WHERE priv IN ('SYSTEM_VARIABLES_ADMIN','CONNECTION_ADMIN','REPLICATION_SLAVE_ADMIN') AND user NOT LIKE 'mysql.%';"
+
+SUCCESS
+  user      host
+  root      localhost
+  orgadmin  localhost
+
+FAILURE
+  user         host
+  appdb1_app   10.0.20.%
+  (Application account holds admin rights; REVOKE them and re-check with SHOW GRANTS.)
+
+---
+
+Generated by Claude | For internal/reference use only

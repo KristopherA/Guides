@@ -1,0 +1,415 @@
+**Updated Complete Step-by-Step Guide: Fixing Sonos App Not Accessing iTunes / Music Library on Mac**
+
+This guide consolidates **all previously tried steps** with the client (2023–2026) and now includes the detailed GUI method for resetting the Sonos app’s Local Network permission on macOS (especially important for Sequoia and later).
+
+### Previously Tried Steps (Summary)
+- Full system restarts and Sonos power cycles (multiple times).
+- File Sharing setup on Mac (repeated).
+- SMB protocol fix via `/etc/nsmb.conf` (worked for Error 913).
+- Adding/re-adding library in Sonos app (Mac + iPhone).
+- Firewall toggles.
+- Network isolation checks.
+- **New addition**: Detailed Local Network permission reset (GUI method).
+
+### Step-by-Step Troubleshooting Guide (Do in This Order)
+
+**Preparation**
+- Ensure Mac, iPhone, and all Sonos devices are on the **same Wi-Fi network** (preferably 5 GHz).
+- Note your Mac’s hostname: Apple menu → **System Settings → General → Sharing**.
+- Note your username: Open Terminal and type `whoami`.
+
+**Step 1: Restart Everything**
+- Restart your Mac.
+- Power cycle all Sonos units (unplug for 30+ seconds, then plug back in starting with the main unit).
+- Restart your router.
+- **Test** library access.  
+**Note**: Tried many times — provides temporary relief but issues often return.
+
+**Step 2: Reset Sonos App Local Network Permission (New – Highly Recommended Early Step)**
+This forces the “Allow Sonos to find and connect to devices on your local network” dialogue to reappear. The GUI toggle is more reliable than Terminal commands on recent macOS.
+
+**GUI Method:**
+1. Fully quit the Sonos app (`Command + Q` or Force Quit via Activity Monitor).
+2. Open **System Settings** (Apple menu → System Settings).
+3. Go to **Privacy & Security** in the sidebar.
+4. Scroll down and click **Local Network**.
+5. Find **Sonos** in the list.
+6. If the toggle is **On**, turn it **Off**. Wait 10–15 seconds.
+7. Turn the toggle back **On**.
+8. Re-open the Sonos app. It should now prompt:  
+   **“Sonos” Would Like to Find and Connect to Devices on Your Local Network.**  
+   Click **Allow**.
+9. (Optional but recommended) Restart your Mac after this step.
+
+**Note**: Repeat this after macOS or Sonos app updates.
+
+**Step 3: Verify and Re-Enable File Sharing on Mac**
+1. System Settings → **General → Sharing** → Turn **File Sharing** ON.
+2. Click the info (i) → **+** to add your Music folder (`~/Music/Music` or iTunes folder).
+3. Set permissions: Your account = Read & Write; Everyone = Read Only.
+4. Click **Options** → Enable **SMB** and select your username.  
+**Note**: Core step tried multiple times.
+
+**Step 4: SMB Protocol Configuration**
+- Open Terminal and run:  
+  `sudo nano /etc/nsmb.conf`
+- Add the following:  
+  ```
+**** this worked ****
+  [default]
+  client_protocols=smb3,smb2
+  ```
+- Save (Ctrl+O → Enter → Ctrl+X) and restart Mac.  
+**Note**: Previously fixed Error 913.
+
+**Step 5: Add/Re-add Music Library in Sonos App**
+- Open Sonos app (try iPhone version first for better results).
+- Go to **Manage** (or Settings) → **Music Library Settings** → **+ Add** → **Networked Device**.
+- Enter path: `\\YourMacHostname\Music` (use backslashes).
+- Use your Mac username and password.
+- Refresh / update the library.  
+**Note**: Do this **after** Local Network reset and File Sharing.
+
+**Step 6: Firewall and Security Checks**
+- Temporarily turn macOS Firewall **Off** (System Settings → Network → Firewall).
+- Test, then re-enable.
+- Check **Privacy & Security → Full Disk Access** and add Sonos if missing.
+
+**Step 7: Additional / Advanced Checks**
+- Verify no client isolation / AP isolation on your router.
+- Reset Sonos controller in the app (if available).
+- Reinstall Sonos app if issues persist.
+- Test on iPhone app first, then Mac.
+
+**Step 8: Test**
+- Play individual tracks, then full playlists from the iTunes/Music library.
+- Test from both Mac and iPhone.
+
+### Order-of-Operations Notes
+- Always start with restarts (Step 1).
+- Perform the **Local Network reset (Step 2)** early — before reconfiguring File Sharing or re-adding the library. This is critical for local discovery and reduces recurring firewall prompts.
+- Complete order: Restart → Local Network Permission → File Sharing → SMB Config → Library Re-add.
+- Many of these steps (especially sharing and SMB) have been tried before but often need to be repeated **in the correct sequence** after permission resets or network changes.
+
+This version should give you a clean, comprehensive guide to send to the client or use in your next session. Let me know if you want a shorter version, email draft, or further additions!
+
+
+GPT from gmail.
+
+# SONOS SYSTEM CHANGES / PROCEDURES / COMMANDS
+
+Client:
+the client (home user)
+
+Main Issue:
+Sonos could not reliably access/play the Mac/iTunes music library.
+
+Primary Error:
+Error 913
+
+Likely Cause:
+SMB protocol mismatch between macOS file sharing and Sonos.
+
+---
+
+## PROCEDURE TRIED: FORCE SMB 2/3 ON macOS
+
+Purpose:
+Force macOS SMB file sharing to use SMB protocol version 2 or 3 so Sonos can access the Mac music share.
+
+Reason:
+Error 913 was identified as an SMB protocol error.
+
+File Created/Edited:
+/etc/nsmb.conf
+
+Required Contents:
+
+[default]
+protocol_vers_map=6
+
+After Change:
+Restart macOS File Sharing.
+
+Procedure:
+
+1. Open macOS System Settings
+2. Go to Sharing
+3. Turn File Sharing OFF
+4. Wait a few seconds
+5. Turn File Sharing ON
+6. Retry Sonos music library access
+
+Result:
+The client confirmed it worked:
+"Greek to me...but it obviously worked!"
+
+---
+
+## SCRIPT MENTIONED
+
+Script Name:
+force-smb23.sh
+
+Purpose:
+Likely automates creation/update of /etc/nsmb.conf to force SMB 2/3.
+
+Attachment:
+force-smb23.sh
+
+Email Context:
+Sent March 17, 2026 in the Sonos troubleshooting thread.
+
+Script contents were not readable from Gmail search results, but the documented end-state was:
+
+[default]
+protocol_vers_map=6
+
+Likely script action:
+
+* Create /etc/nsmb.conf if missing
+* Add SMB protocol setting
+* Possibly restart or prompt restart of file sharing
+
+---
+
+## MANUAL TERMINAL COMMAND VERSION
+
+Use this if recreating the fix manually on macOS:
+
+sudo mkdir -p /etc
+
+sudo tee /etc/nsmb.conf > /dev/null <<'EOF'
+[default]
+protocol_vers_map=6
+EOF
+
+cat /etc/nsmb.conf
+
+Then restart File Sharing manually:
+System Settings > General > Sharing > File Sharing > Off > On
+
+Optional command-line restart attempt:
+
+sudo launchctl kickstart -k system/com.apple.smbd
+
+---
+
+## SONOS / APP PROCEDURES TRIED
+
+1. Phone App Fix
+
+---
+
+Issue:
+
+* iPhone Sonos app showed "access denied" for iTunes/library playlist.
+
+Action:
+
+* Configuration changed through Sonos app.
+
+Result:
+
+* The client confirmed phone playback worked:
+  "Got it working on my phone... no access denied."
+
+Exact app steps were not fully visible in the email search results.
+
+---
+
+2. Mac Restart
+
+---
+
+Action:
+
+* Restarted the Mac.
+
+Result:
+
+* Sonos firewall message still appeared.
+
+---
+
+3. Sonos Hardware Power Cycle
+
+---
+
+Action:
+
+* Powered down the bank of Sonos "boxes"
+* Plugged them back in
+
+Result:
+
+* No change to firewall message.
+
+---
+
+4. File Sharing Restart
+
+---
+
+Action:
+
+* Turned macOS File Sharing off and back on.
+
+Purpose:
+
+* Apply SMB protocol changes.
+
+Result:
+
+* March fix worked after SMB config update.
+
+---
+
+5. Apple Music / Sonos Service Setup Suggested
+
+---
+
+Suggested by the original AV installer.
+
+Procedure:
+
+1. Open Sonos app on mobile device
+2. Go to Settings
+3. Tap Services & Voice
+4. Under Music & Content, tap Add a Service
+5. Select Apple Music
+6. Tap Add to Sonos
+7. Follow authorization prompts
+
+Purpose:
+Use Apple Music streaming directly through Sonos instead of relying only on local iTunes library sharing.
+
+---
+
+## OTHER NOTES
+
+Possible Sonos password hint from installer:
+
+* <PASSWORD>
+
+Original Sonos installer:
+the original AV installer
+
+Installer note:
+
+* They do not support/edit Control4
+* Sonos installed around house build in 2019
+
+---
+
+## CURRENT UNRESOLVED ITEMS
+
+As of later May emails:
+
+* Mac Sonos app still shows firewall warning
+* Local library playlist stopped after about 25 minutes
+* Playlist disappeared
+* Sonos reported "no content"
+* Library may need reload/reindex
+
+---
+
+## NEXT PROCEDURE TO TRY
+
+1. Confirm /etc/nsmb.conf still exists:
+
+cat /etc/nsmb.conf
+
+Expected output:
+
+[default]
+protocol_vers_map=6
+
+2. Restart SMB service:
+
+sudo launchctl kickstart -k system/com.apple.smbd
+
+3. Toggle File Sharing Off/On in macOS Sharing settings.
+
+4. Rebuild/reload Sonos Music Library in Sonos app.
+
+5. If firewall message persists:
+
+* Remove Sonos from macOS firewall app list
+* Re-add Sonos
+* Allow incoming connections
+* Restart Sonos app
+
+EOF
+
+GROK SUmmary from gmail. 
+
+**Here's a compiled list of changes, fixes, and troubleshooting steps tried for the client's Sonos system**, based on your Gmail threads with him. I've organized them chronologically where possible, noting dates, key issues, GUI procedures, command-line steps, and outcomes. Many issues recur around network/firewall/SMB sharing, music library access (especially iTunes/Music app), and app connectivity across Mac, iPhone, and different locations (primary home, vacation homes, etc.).
+
+### Common Recurring Themes
+- **SMB protocol / firewall / sharing errors** (e.g., "firewall settings changed," Error 913).
+- Music library access ("access denied," "no content").
+- Reconnects after network changes, moves, or restarts.
+- Mix of S1/S2 controllers and app versions.
+
+### Key Fixes and Procedures (in reverse chronological order for recency)
+
+**May 2026 (Recent Thread)**
+- **Issue**: Sonos not playing iTunes list ("access denied" on Mac), firewall msg persists, phone playlist issues after restart.
+- **Tried**:
+  - Rebooted Mac.
+  - Power-cycled Sonos hardware (unplugged bank of boxes).
+  - Phone-side library reload.
+  - Planned further Zoom troubleshooting.
+- Phone worked temporarily for library after adjustments; Mac firewall issue lingered.
+
+**March 2026 (New House, Error 913)**
+- **Fix for SMB protocol error (Error 913)**: Mac and Sonos not speaking same SMB language.
+- **Command-line/GUI procedure** (recorded in email):
+  1. Create/edit `/etc/nsmb.conf` (if it doesn't exist).
+  2. Add content to force SMB2/3 (exact config not detailed in snippet but implied as the key change).
+  3. This resolved connectivity so Sonos could see Mac shares.
+- Worked well ("Greek to me...but it obviously worked!").
+
+**February–March 2026 (New House)**
+- Suspected new network/IP changes; suggested re-finding Sonos base via iPhone app.
+- Home automation pros involved for initial setup.
+
+**June 2024 (Vacation Property)**
+- **Detailed sharing setup** (most comprehensive GUI steps recorded):
+  - **Part 1: Set up share on Mac (System Settings)**:
+    - Apple menu → System Settings → General → Sharing → Enable **File Sharing**.
+    - Add music folder via "+" → Set permissions (Everyone: Read Only min; your account: Read & Write).
+    - Options → Enable SMB + your account.
+  - **Part 2**: Note Local hostname (MacName) from Sharing page.
+  - **Part 3: Add to Sonos app**:
+    - Manage → Music Library Settings → + → Networked Device.
+    - Path: `\\MacName\ShareName` (use backslashes).
+    - Enter Mac username (via Terminal: `whoami`) and password.
+    - Alternative: Enable guest access if needed (Users & Groups → Guest User options; share settings for guest/encrypted).
+- Also referenced earlier iPhone Sonos app setup for library.
+
+**2023–2024 (Various Threads)**
+- **Sharing setup variations** (similar to above):
+  - Enable File Sharing, add music folder, set permissions.
+  - Use iPhone Sonos app for library setup: Settings → System → Music Library → Add shared library with `//ComputerName/path/to/Music`.
+  - Firewall checks and network reconnects (e.g., ensure on same Wi-Fi as Sonos, like 5G band).
+- Re-import library, point Sonos back at itself via network path.
+- App updates, controller version checks (S1 vs S2), reboots.
+- One note on using Firefox or other tweaks, but main path was sharing/SMB.
+
+**Older (2020+)**
+- Basic account/sync tweaks (e.g., removing extra internet accounts, two-factor issues when syncing phones).
+
+### Summary of Procedures You've Shared/Used
+**GUI (Most Common)**:
+- System Settings → Sharing → File Sharing on + folder permissions + SMB.
+- Sonos app: Manage → Music Library Settings → Add networked share with `\\hostname\sharename`.
+- iPhone Sonos app for library management/reconnects.
+- Reboots (Mac, Sonos power cycle), app reinstalls, network switches.
+
+**Command Line**:
+- Terminal: `whoami` for username.
+- Create `/etc/nsmb.conf` for SMB version forcing (e.g., client protocols = smb2, smb3).
+
+Many sessions used Zoom for remote control. Issues often resolved temporarily but recurred with updates, moves, or network changes. Let me know if you want me to draft a summary email to the client, search for more specifics, or help with the next fix!

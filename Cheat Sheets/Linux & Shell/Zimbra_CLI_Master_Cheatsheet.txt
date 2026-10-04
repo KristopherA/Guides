@@ -1,0 +1,802 @@
+================================================================================
+ZIMBRA CLI MASTER CHEAT SHEET
+================================================================================
+Tool: Zimbra Collaboration CLI (zmcontrol, zmprov, zmmailbox, zmcertmgr, Postfix tools)
+OS coverage: Linux (Zimbra host mail.example.com; admin console reports Zimbra 10.1.17 NETWORK build)
+Generated: 2026-10-04
+Owner: it@example.com
+Related guide: Mail & Messaging/zimbra-mail-administration-guide.md
+Note: Run Zimbra commands as the zimbra user (su - zimbra) unless an entry says root.
+Note: Staff passwords live in AD (external auth); never paste passwords or secrets into tickets.
+================================================================================
+
+
+SERVICE CONTROL
+================================================================================
+
+COMMAND
+  su - zimbra
+
+DESCRIPTION
+  Switches to the zimbra user with its full environment and PATH. Every zm* command expects this; running them as root fails or leaves root-owned files behind.
+
+USAGE
+  sudo su - zimbra
+
+SUCCESS
+  zimbra@mail:~$
+
+FAILURE
+  su: user zimbra does not exist
+  (You are on the wrong host - confirm with hostname -f that you are on mail.example.com.)
+
+---
+
+COMMAND
+  zmcontrol status
+
+DESCRIPTION
+  Shows the run state of every Zimbra service on the host. It is the first command to run on any mail complaint.
+
+USAGE
+  zmcontrol status
+
+SUCCESS
+  Host mail.example.com
+          amavis                  Running
+          antispam                Running
+          antivirus               Running
+          ldap                    Running
+          mailbox                 Running
+          mta                     Running
+          proxy                   Running
+          stats                   Running
+
+FAILURE
+  Host mail.example.com
+          mailbox                 Stopped
+                  zmmailboxdctl is not running.
+  (A stopped service is your lead. Check disk space with df -h /opt/zimbra before restarting.)
+
+---
+
+COMMAND
+  zmcontrol restart
+
+DESCRIPTION
+  Stops and starts every Zimbra service in order. Expect several minutes of downtime and every client disconnecting, so prefer restarting a single service in business hours.
+
+USAGE
+  zmcontrol restart
+
+SUCCESS
+  Host mail.example.com
+          Stopping zmconfigd...Done.
+          Stopping mailbox...Done.
+          ...
+          Starting mailbox...Done.
+          Starting proxy...Done.
+
+FAILURE
+  Error: must be run as user zimbra
+  (You ran it as root. Run su - zimbra first.)
+
+---
+
+COMMAND
+  zmmailboxdctl restart
+
+DESCRIPTION
+  Restarts only the mailstore (webmail, IMAP, SOAP). The MTA keeps accepting and queueing mail while it restarts.
+
+USAGE
+  zmmailboxdctl restart
+
+SUCCESS
+  Stopping mailboxd...done.
+  Starting mailboxd...done.
+
+FAILURE
+  Starting mailboxd...failed.
+  (Usually a full /opt/zimbra partition or a Java error - check /opt/zimbra/log/zmmailboxd.out.)
+
+---
+
+
+ACCOUNT ADMINISTRATION
+================================================================================
+
+COMMAND
+  zmprov -l gaa [domain]
+
+DESCRIPTION
+  Lists every account. The -l flag reads straight from Zimbra LDAP, which is faster and works even when mailboxd is down.
+
+USAGE
+  zmprov -l gaa example.com | wc -l
+
+SUCCESS
+  1250
+
+FAILURE
+  ERROR: zclient.IO_ERROR (invoke Connection refused, server: localhost) (cause: java.net.ConnectException Connection refused)
+  (You left off -l and mailboxd is down, or LDAP is stopped - check zmcontrol status.)
+
+---
+
+COMMAND
+  zmprov ga <account> [attribute ...]
+
+DESCRIPTION
+  Gets an account and prints its attributes. Name specific attributes to keep the output short.
+
+USAGE
+  zmprov ga jdoe@example.com zimbraAccountStatus zimbraMailQuota zimbraCOSId
+
+SUCCESS
+  # name jdoe@example.com
+  zimbraAccountStatus: active
+  zimbraCOSId: e00428a1-0c00-11d9-836a-000d93afea2a
+  zimbraMailQuota: 5368709120
+
+FAILURE
+  ERROR: account.NO_SUCH_ACCOUNT (no such account: jdoe@example.com)
+  (Typo, wrong domain, or the account was renamed - search with zmprov -l gaa | grep doe.)
+
+---
+
+COMMAND
+  zmprov ca <account> <password> [attribute value ...]
+
+DESCRIPTION
+  Creates an account. Here, logins are checked against AD, so pass an empty password and make sure a matching AD account exists.
+
+USAGE
+  zmprov ca jdoe@example.com '' displayName "Jane Doe" givenName Jane sn Doe
+
+SUCCESS
+  6f9b2c1e-4d7a-4a51-9f0e-2b8c3d1a7e44
+  (The new account's zimbraId.)
+
+FAILURE
+  ERROR: account.ACCOUNT_EXISTS (email address already exists: jdoe@example.com, at DN: uid=jdoe,ou=people,dc=example,dc=com)
+  (The address is already an account or an alias - check zmprov ga and zmprov gaa.)
+
+---
+
+COMMAND
+  zmprov ma <account> <attribute> <value>
+
+DESCRIPTION
+  Modifies an account attribute such as quota, COS, or display name. A + before the attribute name appends a value and a - removes one.
+
+USAGE
+  zmprov ma jdoe@example.com zimbraMailQuota 10737418240
+
+SUCCESS
+  (No output. Confirm with: zmprov ga jdoe@example.com zimbraMailQuota)
+
+FAILURE
+  ERROR: account.INVALID_ATTR_NAME (invalid attr name: zimbraMailQuotaSize)
+  (Misspelled attribute. Look up the real name with zmprov desc -a <name>.)
+
+---
+
+COMMAND
+  zmprov sp <account> <password>
+
+DESCRIPTION
+  Sets a password stored in Zimbra itself. For staff accounts it has no effect because AD checks the password at login, so use it only on local service accounts.
+
+USAGE
+  zmprov sp scanner-relay@example.com '<new-password-from-vault>'
+
+SUCCESS
+  (No output.)
+
+FAILURE
+  ERROR: account.INVALID_PASSWORD (invalid password: too short)
+  (The password does not meet the COS policy. Also check that this account does not use AD auth.)
+
+---
+
+COMMAND
+  zmprov da <account>
+
+DESCRIPTION
+  Permanently deletes an account and all of its mail. This cannot be undone, so export the mailbox first and prefer locking or closing the account.
+
+USAGE
+  zmprov da former.staff@example.com
+
+SUCCESS
+  (No output. zmprov ga former.staff@example.com now returns NO_SUCH_ACCOUNT.)
+
+FAILURE
+  ERROR: account.NO_SUCH_ACCOUNT (no such account: former.staff@example.com)
+  (Already deleted, or the address is an alias of another account.)
+
+---
+
+COMMAND
+  zmprov gad
+
+DESCRIPTION
+  Gets all domains that Zimbra accepts mail for. Use it when inbound mail is rejected with "relay access denied".
+
+USAGE
+  zmprov gad
+
+SUCCESS
+  example.com
+  (One line per domain. The admin console reports 2 domains.)
+
+FAILURE
+  ERROR: service.FAILURE (system failure: unable to connect to LDAP)
+  (Zimbra LDAP is down - run zmcontrol status and check the ldap service.)
+
+---
+
+
+FORWARDING AND SHARED MAILBOXES
+================================================================================
+
+COMMAND
+  zmprov ga <account> zimbraMailForwardingAddress zimbraPrefMailForwardingAddress
+
+DESCRIPTION
+  Shows any forwarding on an account. zimbraMailForwardingAddress is an admin-set forward that users cannot see, and zimbraPrefMailForwardingAddress is the forward users set in webmail Preferences.
+
+USAGE
+  zmprov ga jdoe@example.com zimbraMailForwardingAddress zimbraPrefMailForwardingAddress
+
+SUCCESS
+  # name jdoe@example.com
+  zimbraPrefMailForwardingAddress: jane.doe.personal@example.com
+
+FAILURE
+  # name jdoe@example.com
+  (Only the name line prints: no forward is set. If mail still leaves, check filters with zmmailbox -z -m jdoe@example.com gfrl.)
+
+---
+
+COMMAND
+  zmprov ma <account> zimbraMailForwardingAddress <address>
+
+DESCRIPTION
+  Sets an admin-level forward. Set zimbraPrefMailLocalDeliveryDisabled TRUE only if no copy should stay in the mailbox, and set the forward to '' to remove it.
+
+USAGE
+  zmprov ma reception.old@example.com zimbraMailForwardingAddress reception@example.com
+
+SUCCESS
+  (No output. Confirm with zmprov ga reception.old@example.com zimbraMailForwardingAddress.)
+
+FAILURE
+  ERROR: account.INVALID_ATTR_VALUE (zimbraMailForwardingAddress invalid address)
+  (Malformed address. Forwards to external domains may also be blocked by COS policy.)
+
+---
+
+COMMAND
+  zmmailbox -z -m <shared> mfg <folder> account <delegate> <rights>
+
+DESCRIPTION
+  Grants a delegate rights on one folder of a shared mailbox. The letters are r read, w write, i insert, d delete, x workflow and a admin; grant /Sent separately or the delegate will not see sent mail.
+
+USAGE
+  zmmailbox -z -m reception@example.com mfg /Inbox account jsmith@example.com rwidx
+
+SUCCESS
+  (No output. Confirm with zmmailbox -z -m reception@example.com gfg /Inbox.)
+
+FAILURE
+  ERROR: mail.NO_SUCH_FOLDER (no such folder path: /inbox)
+  (Folder paths are case sensitive - list them with gaf.)
+
+---
+
+COMMAND
+  zmmailbox -z -m <delegate> cm <local-path> <owner> <remote-path>
+
+DESCRIPTION
+  Creates a mountpoint so the shared folder appears in the delegate's folder tree. For a whole account, the GUI route is Admin Console > Tools and Migration > Share Toolkit, which shares rwixd and can also configure send-as.
+
+USAGE
+  zmmailbox -z -m jsmith@example.com cm --view message "/Reception Inbox" reception@example.com /Inbox
+
+SUCCESS
+  4571
+  (The new mountpoint's folder ID.)
+
+FAILURE
+  ERROR: mail.ALREADY_EXISTS (object with that name already exists: Reception Inbox)
+  (A mountpoint already exists. Rename the path or remove the old one with df.)
+
+---
+
+COMMAND
+  zmprov grantRight account <shared> usr <delegate> sendAs
+
+DESCRIPTION
+  Lets a delegate send mail as the shared address. Also add the address to the delegate's zimbraPrefAllowAddressForDelegatedSender so it shows in their From list.
+
+USAGE
+  zmprov grantRight account reception@example.com usr jsmith@example.com sendAs
+
+SUCCESS
+  (No output. List grants with zmprov getGrants account reception@example.com.)
+
+FAILURE
+  ERROR: account.GRANT_EXISTS (grant already exists)
+  (Already granted. If send-as still fails, check the delegate's From persona in webmail.)
+
+---
+
+
+MAILBOX AND SERVER CONFIGURATION
+================================================================================
+
+COMMAND
+  zmmailbox -z -m <account> gaf
+
+DESCRIPTION
+  Lists all folders in a mailbox with unread and message counts. Use it to confirm folder paths before granting rights or exporting.
+
+USAGE
+  zmmailbox -z -m reception@example.com gaf
+
+SUCCESS
+          Id  View      Unread   Msg Count  Path
+  ----------  ----  ----------  ----------  ----------
+           1  conv           0           0  /
+           2  mess          12        4803  /Inbox
+           5  mess           0        1290  /Sent
+           3  mess           0          17  /Trash
+
+FAILURE
+  ERROR: account.NO_SUCH_ACCOUNT (no such account: recption@example.com)
+  (Typo in the -m address.)
+
+---
+
+COMMAND
+  zmmailbox -z -m <account> s -t message [-l limit] "<query>"
+
+DESCRIPTION
+  Searches a mailbox using webmail search syntax. Use it to confirm whether a message was delivered without logging in as the user.
+
+USAGE
+  zmmailbox -z -m jdoe@example.com s -t message -l 10 "from:payroll@example.com after:9/1/26"
+
+SUCCESS
+  num: 1, more: false
+
+       Id  Type   From                  Subject                          Date
+     ----  ----   --------------------  -------------------------------  --------------
+  1. 8821  mess   Payroll               September pay statement          09/26/26 10:14
+
+FAILURE
+  num: 0, more: false
+  (No match. Check the date format (M/D/YY), the folder (in:junk), or trace delivery in /var/log/zimbra.log.)
+
+---
+
+COMMAND
+  zmmailbox -z -m <account> gms
+
+DESCRIPTION
+  Gets the total mailbox size. Use it for quota complaints and before mailbox exports.
+
+USAGE
+  zmmailbox -z -m jdoe@example.com gms
+
+SUCCESS
+  4.62 GB
+
+FAILURE
+  ERROR: zclient.IO_ERROR (invoke Connection refused, server: localhost)
+  (mailboxd is not running - check zmcontrol status.)
+
+---
+
+COMMAND
+  zmprov sm <account> [zmmailbox-command]
+
+DESCRIPTION
+  Selects a mailbox from inside zmprov and runs a zmmailbox command against it. This is handy inside an interactive zmprov session or a scripted batch.
+
+USAGE
+  zmprov sm jdoe@example.com gaf
+
+SUCCESS
+  (The same folder table that zmmailbox gaf prints.)
+
+FAILURE
+  ERROR: account.NO_SUCH_ACCOUNT (no such account: jdoe@example.com)
+  (Wrong address, or the account lives on another mailstore.)
+
+---
+
+COMMAND
+  zmprov gacf [attribute]
+
+DESCRIPTION
+  Gets global config. Name an attribute to read one setting, such as message size limits or active RBLs.
+
+USAGE
+  zmprov gacf zimbraMtaMaxMessageSize zimbraMtaRestriction
+
+SUCCESS
+  zimbraMtaMaxMessageSize: 52428800
+  zimbraMtaRestriction: reject_rbl_client zen.spamhaus.org
+
+FAILURE
+  ERROR: account.INVALID_ATTR_NAME (invalid attr name: zimbraMtaMaxMsgSize)
+  (Misspelled attribute. Use zmprov desc -a to find the right name.)
+
+---
+
+COMMAND
+  zmprov mcf <attribute> <value>
+
+DESCRIPTION
+  Modifies global config for every server and COS that inherits it. Record the old value from gacf first, and restart the affected service if the change does not apply.
+
+USAGE
+  zmprov mcf zimbraMtaMaxMessageSize 52428800
+
+SUCCESS
+  (No output. Confirm with zmprov gacf zimbraMtaMaxMessageSize, then run zmmtactl restart.)
+
+FAILURE
+  ERROR: account.INVALID_ATTR_VALUE (zimbraMtaMaxMessageSize must be a valid long: 50MB)
+  (Size values are in bytes, not in units like MB.)
+
+---
+
+COMMAND
+  zmlocalconfig [key ...]
+
+DESCRIPTION
+  Reads the per-host settings in /opt/zimbra/conf/localconfig.xml. Never run it with -s in a ticket or screen share, because -s prints stored passwords.
+
+USAGE
+  zmlocalconfig zimbra_server_hostname ldap_url mailboxd_java_heap_size
+
+SUCCESS
+  zimbra_server_hostname = mail.example.com
+  ldap_url = ldap://mail.example.com:389
+  mailboxd_java_heap_size = 8192
+
+FAILURE
+  (No output for the key.)
+  (The key name is misspelled - search with zmlocalconfig | grep -i heap.)
+
+---
+
+
+MAIL QUEUE AND FILTERING
+================================================================================
+
+COMMAND
+  /opt/zimbra/libexec/zmqstat
+
+DESCRIPTION
+  Prints message counts for each Postfix queue. It is the quickest way to check whether mail is stuck, and it must run as root.
+
+USAGE
+  sudo /opt/zimbra/libexec/zmqstat
+
+SUCCESS
+  hold=0
+  corrupt=0
+  deferred=14
+  active=0
+  incoming=0
+
+FAILURE
+  /opt/zimbra/libexec/zmqstat: Permission denied
+  (Run it with sudo as root, not as the zimbra user. A deferred count in the thousands means you should check for a compromised account.)
+
+---
+
+COMMAND
+  postqueue -p
+
+DESCRIPTION
+  Lists the queue with the sender, recipient, and deferral reason for each message. The reason text in parentheses usually explains the delay.
+
+USAGE
+  postqueue -p | grep -B2 -A2 example.org
+
+SUCCESS
+  -Queue ID-  --Size-- ----Arrival Time---- -Sender/Recipient-------
+  4C1F2A1B3C     2841 Sat Oct  4 09:12:01  noreply@example.com
+      (connect to mx.example.org[198.51.100.7]:25: Connection timed out)
+                                           jsmith@example.org
+  -- 3 Kbytes in 1 Request.
+
+FAILURE
+  postqueue: fatal: Queue report unavailable - mail system is down
+  (The MTA is stopped - check zmcontrol status and zmmtactl status.)
+
+---
+
+COMMAND
+  /opt/zimbra/common/sbin/postsuper -d <queue-id | ALL> [queue]
+
+DESCRIPTION
+  Deletes messages from the queue. This is destructive, so inspect a message with postcat -q first and use ALL deferred only when you are sure the queue holds spam.
+
+USAGE
+  sudo /opt/zimbra/common/sbin/postsuper -d 4C1F2A1B3C
+
+SUCCESS
+  postsuper: 4C1F2A1B3C: removed
+  postsuper: Deleted: 1 message
+
+FAILURE
+  postsuper: fatal: use of this command is reserved for the superuser
+  (You ran it as zimbra. Run it as root with the full Zimbra path.)
+
+---
+
+COMMAND
+  zmamavisdctl status|restart
+
+DESCRIPTION
+  Checks or restarts amavisd, which passes mail through ClamAV and SpamAssassin. Restart it after changing filtering settings or DKIM keys.
+
+USAGE
+  zmamavisdctl restart
+
+SUCCESS
+  Stopping amavisd... done.
+  Starting amavisd...done.
+
+FAILURE
+  amavisd is not running.
+  (A stopped filter backs up the incoming queue - check /var/log/zimbra.log for amavis errors.)
+
+---
+
+COMMAND
+  zmantispamctl status|restart
+
+DESCRIPTION
+  Controls the antispam service, which includes SpamAssassin rules and the Bayes database. Use it after rule updates or retraining with zmtrainsa.
+
+USAGE
+  zmantispamctl status
+
+SUCCESS
+  antispam is running.
+
+FAILURE
+  antispam is not running.
+  (Start it with zmantispamctl start, and check the antispam status line in zmcontrol status.)
+
+---
+
+
+LOGS AND CERTIFICATES
+================================================================================
+
+COMMAND
+  tail -f /opt/zimbra/log/mailbox.log
+
+DESCRIPTION
+  Follows the mailstore log, which records logins, SOAP and IMAP errors, and mailbox exceptions. Filter on the user's address while they reproduce the problem.
+
+USAGE
+  tail -f /opt/zimbra/log/mailbox.log | grep -i jdoe@example.com
+
+SUCCESS
+  2026-10-04 09:14:02,551 INFO  [qtp1-112:https://mail.example.com/service/soap/AuthRequest] [name=jdoe@example.com;oip=203.0.113.10;] account - authentication successful
+
+FAILURE
+  tail: cannot open '/opt/zimbra/log/mailbox.log' for reading: Permission denied
+  (Run it as zimbra or root.)
+
+---
+
+COMMAND
+  grep <pattern> /var/log/zimbra.log
+
+DESCRIPTION
+  Searches the MTA log for message delivery, bounces, and rejections. Follow the Postfix queue ID to trace one message from start to end. The same log is forwarded to graylog01.example.com.
+
+USAGE
+  sudo grep "to=<jdoe@example.com>" /var/log/zimbra.log | tail -5
+
+SUCCESS
+  Oct  4 09:20:11 mail postfix/lmtp[2211]: 4C1F2A1B3C: to=<jdoe@example.com>, relay=mail.example.com[127.0.0.1]:7025, delay=0.4, dsn=2.1.5, status=sent (250 2.1.5 Delivery OK)
+
+FAILURE
+  Oct  4 09:21:40 mail postfix/smtpd[3310]: NOQUEUE: reject: RCPT from unknown[198.51.100.20]: 554 5.7.1 Service unavailable; Client host [198.51.100.20] blocked using zen.spamhaus.org
+  (The sender was rejected by an RBL. Check zmprov gacf zimbraMtaRestriction.)
+
+---
+
+COMMAND
+  zmcertmgr viewdeployedcrt [service]
+
+DESCRIPTION
+  Shows the certificate that each service is serving, with its expiry date and SANs. Check it first when TLS warnings appear in every client at once.
+
+USAGE
+  zmcertmgr viewdeployedcrt proxy
+
+SUCCESS
+  - proxy /opt/zimbra/conf/nginx.crt
+  notBefore=Jan 10 00:00:00 2026 GMT
+  notAfter=Feb  9 23:59:59 2027 GMT
+  subject=CN = mail.example.com
+  SubjectAltName= mail.example.com
+
+FAILURE
+  notAfter=Sep 30 23:59:59 2026 GMT
+  (The certificate has expired. Renew it, run verifycrt, run deploycrt, then run zmcontrol restart.)
+
+---
+
+COMMAND
+  zmcertmgr checkcrtexpiration [-days N] [service]
+
+DESCRIPTION
+  Checks whether deployed certificates expire within N days (the default is 30). It works well as a cron check that gives a renewal reminder.
+
+USAGE
+  zmcertmgr checkcrtexpiration -days 30
+
+SUCCESS
+  Checking /opt/zimbra/ssl/zimbra/commercial/commercial.crt
+    Certificate will not expire
+
+FAILURE
+  Checking /opt/zimbra/ssl/zimbra/commercial/commercial.crt
+    Certificate will expire
+  (The certificate expires within the window - start the CSR and renewal now.)
+
+---
+
+COMMAND
+  zmcertmgr deploycrt comm <cert> <ca-chain>
+
+DESCRIPTION
+  Installs a signed commercial certificate into every Zimbra service. Run zmcertmgr verifycrt comm first, and run zmcontrol restart afterwards or some services keep serving the old certificate.
+
+USAGE
+  zmcertmgr deploycrt comm /opt/zimbra/ssl/zimbra/commercial/commercial.crt /opt/zimbra/ssl/zimbra/commercial/commercial_ca.crt
+
+SUCCESS
+  ** Verifying '/opt/zimbra/ssl/zimbra/commercial/commercial.crt' against '/opt/zimbra/ssl/zimbra/commercial/commercial.key'
+  Certificate and private key match.
+  ** Copying '/opt/zimbra/ssl/zimbra/commercial/commercial.crt' to '/opt/zimbra/ssl/zimbra/server/server.crt'
+  ** Saving config key 'zimbraSSLCertificate' via zmprov modifyServer mail.example.com...ok
+
+FAILURE
+  ERROR: Unmatching certificate (/opt/zimbra/ssl/zimbra/commercial/commercial.crt) and private key (/opt/zimbra/ssl/zimbra/commercial/commercial.key) pair.
+  (The certificate was issued from a different CSR or key. Use the key that zmcertmgr createcsr generated.)
+
+---
+
+
+SECURITY AND AUDIT
+================================================================================
+
+COMMAND
+  zmprov ma <account> zimbraAccountStatus locked|active
+
+DESCRIPTION
+  Locks an account without deleting it (locked), or unlocks it (active). This is the first containment step for a compromised account that is relaying spam.
+
+USAGE
+  zmprov ma jdoe@example.com zimbraAccountStatus locked
+
+SUCCESS
+  (No output. zmprov ga jdoe@example.com zimbraAccountStatus now shows: locked)
+
+FAILURE
+  ERROR: account.INVALID_ATTR_VALUE (zimbraAccountStatus must be one of: active,maintenance,locked,closed,lockout,pending)
+  (Misspelled value. Note that lockout is the automatic failed-login state; set active to clear it.)
+
+---
+
+COMMAND
+  grep "authentication failed" /opt/zimbra/log/audit.log
+
+DESCRIPTION
+  Searches the audit log for failed logins, showing the source IP (oip) and protocol. Use it to decide whether a fail2ban ban is a fat-fingered staff member or an attack.
+
+USAGE
+  grep "authentication failed" /opt/zimbra/log/audit.log | grep jdoe@example.com | tail -5
+
+SUCCESS
+  2026-10-04 08:12:44,118 WARN  [qtp1-87] [name=jdoe@example.com;oip=203.0.113.10;] security - cmd=Auth; account=jdoe@example.com; protocol=soap; error=authentication failed for [jdoe@example.com], invalid password;
+
+FAILURE
+  (No output.)
+  (No failures in the current log - check rotated logs with zgrep in audit.log.*.gz, or search Graylog.)
+
+---
+
+COMMAND
+  ip route show | grep <ip>   /   ip route del <ip>
+
+DESCRIPTION
+  On mail.example.com, fail2ban bans IPs by adding a route, so a banned IP shows in the routing table. Get the user's public IP, confirm the ban in Graylog, and then remove the route as root. This is the organization's documented unban method.
+
+USAGE
+  sudo ip route show | grep 203.0.113.10 && sudo ip route del 203.0.113.10
+
+SUCCESS
+  unreachable 203.0.113.10
+  (Run the grep again afterwards: no output means the ban is gone.)
+
+FAILURE
+  RTNETLINK answers: No such process
+  (There is no route ban for that IP. Check the fail2ban jails, then Snort on pfSense.)
+
+---
+
+COMMAND
+  fail2ban-client set <jail> unbanip <ip>
+
+DESCRIPTION
+  Unbans an IP through fail2ban so its ban records stay consistent. Get the jail names from fail2ban-client status and run it as root.
+
+USAGE
+  sudo fail2ban-client set zimbra-submission unbanip 203.0.113.10
+
+SUCCESS
+  1
+
+FAILURE
+  Sorry but the jail 'zimbra-submission' does not exist
+  (The jail name is wrong - list real jails with sudo fail2ban-client status. Local jail names are not yet recorded in the guide.)
+
+---
+
+COMMAND
+  zmprov gd <domain> zimbraAuthMech zimbraAuthLdapURL
+
+DESCRIPTION
+  Audits which AD servers the domain uses for login. Request only these attributes, because a full gd dump includes the AD bind credential attribute.
+
+USAGE
+  zmprov gd example.com zimbraAuthMech zimbraAuthLdapURL
+
+SUCCESS
+  # name example.com
+  zimbraAuthMech: ldap
+  zimbraAuthLdapURL: ldaps://auth2.example.com:636 ldaps://auth4.example.com:636
+
+FAILURE
+  zimbraAuthLdapURL: ldaps://auth2.example.com:636
+  (No failover AD server is listed - if auth2 goes down, every login fails. Add auth4 with zmprov md.)
+
+---
+
+COMMAND
+  zmbackup -f -a all [-s server]
+
+DESCRIPTION
+  Runs a full backup of all accounts with the built-in backup tool. This needs Network Edition: the admin console shows a NETWORK build, but confirm with zmcontrol -v. Open Source Edition has no zmbackup, so use getRestURL exports and zmslapcat instead.
+
+USAGE
+  zmbackup -f -a all -s mail.example.com
+
+SUCCESS
+  full-20261004.070012.345
+
+FAILURE
+  -bash: zmbackup: command not found
+  (Open Source Edition, or you are not running as zimbra. Check the edition with zmcontrol -v.)
+
+---
+
+================================================================================
+Generated by Claude | For internal/reference use only
+================================================================================

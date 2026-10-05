@@ -14,6 +14,7 @@ Sysadmin, networking and security guides, cheat sheets and runbooks. All hostnam
 - [Data & Analytics/MySQL_Admin_Master_Cheatsheet.txt](Cheat%20Sheets/Data%20%26%20Analytics/MySQL_Admin_Master_Cheatsheet.txt)
 - [Linux & Shell/Zimbra_CLI_Master_Cheatsheet.txt](Cheat%20Sheets/Linux%20%26%20Shell/Zimbra_CLI_Master_Cheatsheet.txt)
 - [macOS/macOS_Admin_Master_Cheatsheet.txt](Cheat%20Sheets/macOS/macOS_Admin_Master_Cheatsheet.txt)
+- [Security & Forensics/Sysdig_Master_Cheatsheet.txt](Cheat%20Sheets/Security%20%26%20Forensics/Sysdig_Master_Cheatsheet.txt)
 - **Databases**
 - [filemaker-server-administration-guide.md](Databases/filemaker-server-administration-guide.md)
 - [mysql certificate rotation.txt](Databases/mysql%20certificate%20rotation.txt)

@@ -1,0 +1,475 @@
+SYSDIG CHEAT SHEET - IR, DETECTION, CONTAINERS, AND K8S
+========================================================
+
+Purpose:
+    Sysdig captures and filters Linux system calls and kernel events in real time.
+    It is useful for incident response, troubleshooting, process tracing, file I/O,
+    network investigation, and container visibility.
+
+IMPORTANT NOTES
+---------------
+- Run with root privileges when required:
+      sudo sysdig ...
+
+- Capture first, analyze second when investigating a live system:
+      sudo sysdig -w evidence.scap
+
+- Read a saved capture:
+      sudo sysdig -r evidence.scap
+
+- List available fields:
+      sysdig -l
+
+- List available chisels:
+      sysdig -cl
+
+
+BASIC COMMANDS
+--------------
+
+sysdig -cl
+    List all available chisels.
+
+sysdig -c topprocs_cpu
+    Show top CPU-using processes.
+
+sysdig -c topprocs_memory
+    Show top memory-consuming processes.
+
+sysdig -c proc_exec_time
+    Show process execution time.
+
+sysdig -c netstat
+    Show active network connections.
+
+sysdig -c topconns
+    Show top network connections by total bytes.
+
+sysdig -c spy_users
+    Capture interactive shell activity by users.
+
+sysdig -j
+    Output events in JSON format.
+
+
+CAPTURE AND REPLAY
+------------------
+
+sudo sysdig -w output.scap
+    Write all captured events to a file.
+
+sudo sysdig -r output.scap
+    Read events from a saved capture.
+
+sudo sysdig -C 10 -w output.scap
+    Split capture files every 10 MB.
+
+sudo sysdig -G 60 -w my-%m-%d_%H:%M:%S.scap
+    Rotate capture files every 60 seconds.
+
+sudo sysdig -M 300 -w five_minutes.scap
+    Capture for 300 seconds, then stop.
+
+sudo sysdig -s 4096 -w full_strings.scap
+    Increase captured string length to 4096 bytes.
+
+
+PROCESS INVESTIGATION
+---------------------
+
+sudo sysdig proc.pid=1234
+    Capture all events from a specific process ID.
+
+sudo sysdig proc.name=nginx
+    Capture all events from a specific process name.
+
+sudo sysdig "proc.name=bash"
+    Watch bash activity.
+
+sudo sysdig "proc.name in (bash,sh,zsh)"
+    Watch common shell activity.
+
+sudo sysdig "evt.type=execve"
+    Show process execution events.
+
+sudo sysdig "evt.type=execve and proc.name!=sysdig"
+    Show process execution events excluding sysdig itself.
+
+sudo sysdig -p "%evt.time %user.name %proc.name %proc.pid %evt.args" "evt.type=execve"
+    Print command executions with time, user, process, PID, and arguments.
+
+sudo sysdig "proc.pname=sshd"
+    Show activity from processes spawned by sshd.
+
+sudo sysdig "proc.aname=sshd"
+    Show activity from processes with sshd anywhere in the ancestor chain.
+
+
+USER ACTIVITY
+-------------
+
+sudo sysdig -c spy_users
+    Capture interactive shell activity by user.
+
+sudo sysdig -p "%evt.time %user.name %proc.name %evt.args" "evt.type=execve"
+    Show commands executed by users.
+
+sudo sysdig "user.name=root"
+    Show activity performed by root.
+
+sudo sysdig "user.name!=root"
+    Show activity performed by non-root users.
+
+sudo sysdig "evt.type=execve and user.name=root"
+    Show commands executed as root.
+
+
+NETWORK INVESTIGATION
+---------------------
+
+sudo sysdig evt.type=connect
+    Show outbound connection attempts.
+
+sudo sysdig evt.type=accept
+    Show inbound accepted connections.
+
+sudo sysdig -c netstat
+    Show active network connections.
+
+sudo sysdig -c topconns
+    Show top network connections by total bytes.
+
+sudo sysdig "fd.type=ipv4"
+    Show IPv4 network activity.
+
+sudo sysdig "fd.type=ipv6"
+    Show IPv6 network activity.
+
+sudo sysdig "fd.port=443"
+    Show traffic involving port 443.
+
+sudo sysdig "fd.sport=22 or fd.dport=22"
+    Show SSH-related traffic.
+
+sudo sysdig "evt.type=connect and fd.dip=10.0.0.1"
+    Show outbound connections to 10.0.0.1.
+
+sudo sysdig "evt.type=connect and fd.dport=4444"
+    Detect possible reverse shell activity using port 4444.
+
+sudo sysdig -p "%evt.time %proc.name %proc.pid %fd.name %evt.args" "evt.type=connect"
+    Print outbound connection details.
+
+
+FILE I/O INVESTIGATION
+----------------------
+
+sudo sysdig evt.type=unlink
+    Show file deletion events.
+
+sudo sysdig "evt.type=open"
+    Show file open events.
+
+sudo sysdig "evt.type=openat"
+    Show openat file events.
+
+sudo sysdig "evt.type in (open,openat,creat)"
+    Show file creation/open activity.
+
+sudo sysdig "evt.type=unlink and fd.name contains /tmp"
+    Show deleted files under /tmp.
+
+sudo sysdig -p "%evt.time %proc.name %user.name %fd.name %evt.args" "evt.type in (open,openat,creat,unlink)"
+    Print file activity with process, user, file, and event details.
+
+sudo sysdig -p "%evt.type %evt.args" fd.directory=/tmp
+    Monitor file I/O in /tmp.
+
+sudo sysdig -A -c echo_fds "fd.filename=passwd"
+    Show I/O activity involving files named passwd.
+
+sudo sysdig "fd.name contains /etc/passwd"
+    Watch access to /etc/passwd.
+
+sudo sysdig "fd.name contains /etc/shadow"
+    Watch access to /etc/shadow.
+
+sudo sysdig "fd.name contains authorized_keys"
+    Watch SSH authorized_keys access.
+
+sudo sysdig "fd.name contains /var/log"
+    Watch log file access.
+
+
+SECURITY DETECTION EXAMPLES
+---------------------------
+
+sudo sysdig "proc.name=nmap and evt.type=sendto and fd.dip=10.0.0.1"
+    Detect nmap scanning activity targeting 10.0.0.1.
+
+sudo sysdig "evt.type=execve and proc.name in (nc,ncat,netcat,socat)"
+    Detect common reverse shell or pivoting tools.
+
+sudo sysdig "evt.type=connect and proc.name in (nc,ncat,netcat,socat,bash,sh)"
+    Detect suspicious outbound connections from shell or networking tools.
+
+sudo sysdig "evt.type=execve and evt.args contains chmod"
+    Detect chmod execution.
+
+sudo sysdig "evt.type=execve and evt.args contains chown"
+    Detect chown execution.
+
+sudo sysdig "evt.type=execve and evt.args contains curl"
+    Detect curl execution.
+
+sudo sysdig "evt.type=execve and evt.args contains wget"
+    Detect wget execution.
+
+sudo sysdig "evt.type=execve and evt.args contains base64"
+    Detect base64 usage.
+
+sudo sysdig "evt.type=execve and evt.args contains /dev/tcp"
+    Detect bash TCP redirection patterns.
+
+sudo sysdig "evt.type=execve and evt.args contains crontab"
+    Detect crontab modification attempts.
+
+sudo sysdig "fd.name contains /etc/cron"
+    Watch cron-related file access.
+
+sudo sysdig "fd.name contains systemd"
+    Watch systemd-related file activity.
+
+sudo sysdig "evt.type=execve and evt.args contains sudo"
+    Detect sudo command execution.
+
+sudo sysdig "evt.type=execve and evt.args contains su"
+    Detect su command execution.
+
+sudo sysdig "evt.type=execve and evt.args contains ssh"
+    Detect SSH client activity.
+
+sudo sysdig "evt.type=execve and evt.args contains scp"
+    Detect SCP activity.
+
+sudo sysdig "evt.type=execve and evt.args contains rsync"
+    Detect rsync activity.
+
+
+CONTAINER MONITORING
+--------------------
+
+sudo sysdig "container.id != host"
+    Show only container activity.
+
+sudo sysdig "container.name=nginx"
+    Show activity from a container named nginx.
+
+sudo sysdig -pc -c topprocs_cpu container.name=nginx
+    Monitor CPU usage inside the nginx container.
+
+sudo sysdig "container.image contains nginx"
+    Show activity from containers using images containing nginx.
+
+sudo sysdig -p "%evt.time %container.name %proc.name %evt.type %evt.args" "container.id != host"
+    Print container event activity.
+
+sudo sysdig "container.id != host and evt.type=execve"
+    Show process executions inside containers.
+
+sudo sysdig "container.id != host and proc.name in (bash,sh)"
+    Detect shells running inside containers.
+
+sudo sysdig "container.id != host and evt.type=connect"
+    Show outbound connections from containers.
+
+sudo sysdig "container.id != host and fd.name contains /etc/passwd"
+    Watch container access to passwd files.
+
+sudo sysdig "container.id != host and fd.name contains authorized_keys"
+    Watch container access to SSH authorized_keys files.
+
+
+KUBERNETES-FOCUSED FILTERS
+--------------------------
+These require sysdig with Kubernetes metadata support.
+
+sudo sysdig "k8s.ns.name=default"
+    Show activity in the default namespace.
+
+sudo sysdig "k8s.pod.name contains nginx"
+    Show activity from pods with nginx in the pod name.
+
+sudo sysdig "k8s.deployment.name=nginx"
+    Show activity from a specific deployment.
+
+sudo sysdig "k8s.ns.name=prod and evt.type=execve"
+    Show command execution in the prod namespace.
+
+sudo sysdig "k8s.ns.name=prod and proc.name in (bash,sh)"
+    Detect shells running in the prod namespace.
+
+sudo sysdig "k8s.pod.name contains api and evt.type=connect"
+    Show outbound connections from API pods.
+
+sudo sysdig -p "%evt.time %k8s.ns.name %k8s.pod.name %container.name %proc.name %evt.args" "evt.type=execve"
+    Print Kubernetes command execution context.
+
+
+USEFUL OUTPUT FORMATS
+---------------------
+
+sudo sysdig -p "%evt.time %proc.name %proc.pid %evt.type %evt.args"
+    Print event time, process name, PID, event type, and arguments.
+
+sudo sysdig -p "%evt.time %user.name %proc.name %proc.pid %fd.name %evt.args"
+    Print time, user, process, PID, file descriptor name, and arguments.
+
+sudo sysdig -p "%evt.time %container.name %proc.name %evt.type %evt.args" "container.id != host"
+    Print container-aware event output.
+
+sudo sysdig -j "evt.type=execve"
+    Output exec events as JSON.
+
+sudo sysdig -j "evt.type=connect"
+    Output network connection events as JSON.
+
+
+COMMON FILTER OPERATORS
+-----------------------
+
+=
+    Equals.
+
+!=
+    Does not equal.
+
+contains
+    String contains value.
+
+in
+    Match one of several values.
+
+and
+    Both conditions must be true.
+
+or
+    Either condition can be true.
+
+not
+    Negate a condition.
+
+Examples:
+
+sudo sysdig "evt.type=accept and proc.name!=httpd"
+    Accepted inbound connections where process is not httpd.
+
+sudo sysdig "proc.name in (bash,sh,zsh)"
+    Match bash, sh, or zsh.
+
+sudo sysdig "fd.name contains /tmp and evt.type=unlink"
+    File deletion events under /tmp.
+
+sudo sysdig "not proc.name=sysdig"
+    Exclude sysdig process events.
+
+
+INCIDENT RESPONSE QUICK WORKFLOW
+--------------------------------
+
+1. Start a capture immediately:
+      sudo sysdig -w incident.scap
+
+2. Record host context separately:
+      hostname
+      date -u
+      ip addr
+      ps auxww
+      ss -plant
+      who
+      last -a
+
+3. Analyze process execution:
+      sudo sysdig -r incident.scap "evt.type=execve"
+
+4. Analyze network connections:
+      sudo sysdig -r incident.scap "evt.type=connect or evt.type=accept"
+
+5. Analyze suspicious file access:
+      sudo sysdig -r incident.scap "fd.name contains /etc/passwd or fd.name contains /etc/shadow or fd.name contains authorized_keys"
+
+6. Analyze container activity:
+      sudo sysdig -r incident.scap "container.id != host"
+
+7. Export high-signal events as JSON:
+      sudo sysdig -j -r incident.scap "evt.type=execve or evt.type=connect or evt.type=accept or evt.type=unlink"
+
+
+PRACTICAL TROUBLESHOOTING COMMANDS
+----------------------------------
+
+sudo sysdig -c topprocs_cpu
+    Find CPU-heavy processes.
+
+sudo sysdig -c topprocs_memory
+    Find memory-heavy processes.
+
+sudo sysdig -c topfiles_bytes
+    Find files with the most I/O by bytes.
+
+sudo sysdig -c topfiles_time
+    Find files consuming the most I/O time.
+
+sudo sysdig -c topconns
+    Find highest-traffic network connections.
+
+sudo sysdig -c netstat
+    View active connections.
+
+sudo sysdig "evt.type=connect and evt.failed=true"
+    Show failed connection attempts.
+
+sudo sysdig "evt.failed=true"
+    Show failed system calls.
+
+sudo sysdig "evt.failed=true and proc.name=nginx"
+    Show failed system calls from nginx.
+
+
+HIGH-SIGNAL HUNTING FILTERS
+---------------------------
+
+sudo sysdig "evt.type=execve and proc.name in (bash,sh,zsh,python,perl,ruby,nc,ncat,socat,curl,wget)"
+    Hunt for commonly abused tools.
+
+sudo sysdig "evt.type=connect and proc.name in (bash,sh,zsh,python,perl,ruby,nc,ncat,socat)"
+    Hunt for suspicious outbound connections.
+
+sudo sysdig "fd.name contains /tmp and evt.type in (open,openat,creat,unlink)"
+    Hunt for suspicious temp directory file activity.
+
+sudo sysdig "fd.name contains /dev/shm"
+    Hunt for activity under shared memory.
+
+sudo sysdig "fd.name contains /var/spool/cron"
+    Hunt for cron persistence.
+
+sudo sysdig "fd.name contains /etc/systemd/system"
+    Hunt for systemd persistence.
+
+sudo sysdig "evt.type=execve and evt.args contains LD_PRELOAD"
+    Hunt for LD_PRELOAD abuse.
+
+sudo sysdig "evt.type=execve and evt.args contains nohup"
+    Hunt for detached background execution.
+
+sudo sysdig "evt.type=execve and evt.args contains setsid"
+    Hunt for session-detached execution.
+
+
+REMINDERS
+---------
+- Sysdig can generate a lot of data quickly. Prefer targeted filters when possible.
+- For incident response, preserve raw .scap captures before filtering.
+- Always document hostname, time zone, UTC time, command used, and capture filename.
+- Be careful running noisy commands on unstable production systems.
